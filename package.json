@@ -1,0 +1,45 @@
+{
+  "name": "aku-player",
+  "productName": "aku-player",
+  "version": "0.1.0",
+  "description": "A local music player for Windows",
+  "author": "of201",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.akuplayer.app",
+    "productName": "aku-player",
+    "artifactName": "AKU.${ext}",
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "style.css",
+      "renderer.js",
+      "mini.html",
+      "mini.css",
+      "mini.js",
+      "mini-preload.js",
+      "package.json",
+      "build/icon.png"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "executableName": "AKU",
+      "target": [
+        "portable"
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.8.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "music-metadata": "^12.2.1"
+  }
+}

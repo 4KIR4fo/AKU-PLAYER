@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self' data: media:">
+<title>AKU</title>
+<link rel="stylesheet" href="mini.css">
+</head>
+<body>
+<svg class="svg-sprite" aria-hidden="true">
+  <symbol id="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+  <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></symbol>
+  <symbol id="icon-next" viewBox="0 0 24 24"><path d="M16 6h2v12h-2zM6 18l8.5-6L6 6z"/></symbol>
+  <symbol id="icon-close" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></symbol>
+  <symbol id="icon-cube" viewBox="0 0 24 24"><path d="M7 7h10v10H7z"/></symbol>
+  <symbol id="icon-volume" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9zm13.5 3A4.5 4.5 0 0 0 14 7.97v8.05A4.47 4.47 0 0 0 16.5 12zM14 3.23v2.06a7 7 0 0 1 0 13.42v2.06a9 9 0 0 0 0-17.54z"/></symbol>
+</svg>
+
+<div id="mini" class="mini-bar">
+  <div id="mini-cover" class="cover" title="Minimize / expand"><span>&#9834;</span></div>
+  <div id="mini-main">
+    <div id="mini-row">
+      <div id="mini-meta">
+        <div id="mini-title">Nothing playing</div>
+        <div id="mini-artist"></div>
+      </div>
+      <div id="mini-controls">
+        <button id="mini-play" class="mini-icon-btn play" title="Play / Pause"><svg><use id="mini-play-icon" href="#icon-play"/></svg></button>
+        <button id="mini-next" class="mini-icon-btn" title="Next"><svg><use href="#icon-next"/></svg></button>
+        <button id="mini-cube" class="mini-icon-btn" title="Minimize to cube"><svg><use href="#icon-cube"/></svg></button>
+        <button id="mini-close" class="mini-icon-btn" title="Close mini player"><svg><use href="#icon-close"/></svg></button>
+      </div>
+    </div>
+    <div id="mini-seek-row" class="mini-slider-row hidden">
+      <input id="mini-seek" type="range" min="0" max="1000" value="0">
+    </div>
+    <div id="mini-volume-row" class="mini-slider-row hidden">
+      <svg class="mini-volume-icon"><use href="#icon-volume"/></svg>
+      <input id="mini-volume" type="range" min="0" max="100" value="80">
+    </div>
+  </div>
+</div>
+<script src="mini.js"></script>
+</body>
+</html>

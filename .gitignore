@@ -1,0 +1,7 @@
+node_modules/
+dist/
+build-info.json
+*.log
+build/.icon-ico/
+.DS_Store
+Thumbs.db
