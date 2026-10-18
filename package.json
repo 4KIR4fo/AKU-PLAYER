@@ -1,14 +1,37 @@
 {
   "name": "aku-player",
   "productName": "aku-player",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A local music player for Windows",
-  "author": "of201",
+  "author": "4KIR4fo",
+  "license": "MIT",
+  "homepage": "https://github.com/4KIR4fo/AKU-PLAYER#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/4KIR4fo/AKU-PLAYER.git"
+  },
+  "bugs": {
+    "url": "https://github.com/4KIR4fo/AKU-PLAYER/issues"
+  },
+  "keywords": [
+    "music-player",
+    "electron",
+    "windows",
+    "audio",
+    "mp3",
+    "flac"
+  ],
   "main": "main.js",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable"
+    "dev": "electron .",
+    "build": "electron-builder --win portable",
+    "dist": "electron-builder --win portable",
+    "postinstall": "node node_modules/electron/install.js"
   },
   "build": {
     "appId": "com.akuplayer.app",
