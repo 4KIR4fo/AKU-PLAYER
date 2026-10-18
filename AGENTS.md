@@ -20,8 +20,8 @@ cmd.exe /c "C:\PROGRA~1\nodejs\node.exe node_modules\electron\cli.js ."
 
 - Launching (dev): do NOT use `npm.cmd start` from WSL — the `.bin\electron.cmd` shim needs `node` on PATH. Either use the `cli.js` invocation above, or prefix with the PATH set. In a native Windows terminal (fresh session), `npm start` works normally.
 - Dev workflow: `main.js` / `preload.js` / `mini-preload.js` changes need a full app restart (main-process/preload code doesn't hot-apply); renderer-only changes (`index.html`, `style.css`, `renderer.js`, `mini.html`, `mini.css`, `mini.js`) apply with Ctrl+R (default Electron menu is kept)
-- Packaging: `cmd.exe /c "set PATH=C:\PROGRA~1\nodejs;%PATH%&&C:\PROGRA~1\nodejs\node.exe node_modules\electron-builder\out\cli\cli.js --win portable"` (equivalent to `npm run dist`; same PATH caveat) → `dist\AKU.exe`
-- Electron 44 has **no postinstall download**: after a fresh `npm install`, the binary is missing until you run `cmd.exe /c "C:\PROGRA~1\nodejs\node.exe node_modules\electron\install.js"` (also exposed as `npm exec install-electron`)
+- Packaging: `cmd.exe /c "set PATH=C:\PROGRA~1\nodejs;%PATH%&&C:\PROGRA~1\nodejs\node.exe node_modules\electron-builder\out\cli\cli.js --win portable"` (equivalent to `npm run dist` / `npm run build`; same PATH caveat) → `dist\AKU.exe`
+- Electron 44 has **no postinstall download**, so `package.json` declares `"postinstall": "node node_modules/electron/install.js"` and a fresh `npm install` now fetches the binary automatically. With `--ignore-scripts`, run it by hand: `cmd.exe /c "C:\PROGRA~1\nodejs\node.exe node_modules\electron\install.js"`
 - npm 11 `allowScripts` blocks `electron-winstaller`'s postinstall by default; harmless for the portable (NSIS) target
 - Never run npm inside WSL for this project — it would resolve the Linux Electron, which cannot run as the intended Windows app
 
@@ -51,14 +51,24 @@ cmd.exe /c "C:\PROGRA~1\nodejs\node.exe node_modules\electron\cli.js ."
 - Audio is streamed via custom `media://` scheme in `main.js`; do not switch to `file://` or relax `webSecurity` — CSP in `index.html` only allows `media:` for audio/covers
 - Both windows use `contextIsolation: true` + `sandbox: true` with a preload (`window.aku` / `window.akuMini`); add APIs via `contextBridge`, never expose Node. Renderer CSP is `default-src 'none'`, so the renderer cannot fetch externally — do outbound network in `main.js` (see categorizer)
 - `window.prompt` is unavailable in Electron; playlist creation uses an inline input (`#new-playlist-input`)
-- No tests or linter configured
+- No tests or linter configured; `.github/workflows/ci.yml` runs `node --check` on the JS entry points as a light parse gate
 - User constraint: keep all changes inside this folder unless explicitly approved
 
 ## Views & settings
 - Sidebar nav: Library, Favorites, then browse views Albums/Artists/Genres/Eras. Browse pages show a cover grid (Albums) or list rows (Artists/Genres/Eras); clicking one opens a detail view (`state.view.type` `album`/`artist`/`genre`/`era` with `name`), which reuses the normal track rows. Search filters group names on browse pages, tracks on list/detail views (`renderMain()` routes). `renderer.js` helpers: `albumGroups()` (key `album\u0000artist`), `artistGroups()`, `eraGroups()` (decade label from `track.year`, newest-first, `Unknown` last), plus the existing `genreGroups()`
 - Track objects include `year` (from music-metadata `common.year`, falling back to `common.date`); `null` when absent. Eras group by `floor(year/10)*10` → e.g. `2000s`; year-less tracks land in `Unknown`
-- Settings is a modal overlay in the main window (`#settings-overlay`, built by `renderSettings()` from `settingsSections()`), opened by the topbar gear (`#settings-btn`). Every option lives in `state.settings` (persisted in the localStorage blob) and is applied by `applySettings()`. Toggles: theme, sidebar auto-hide, browse sections, genre tools, favorites, quality indicator, cover art in rows, compact density, resume playback, confirm playlist delete, shuffle/repeat buttons, and the mini-player options below
+- Settings is a modal overlay in the main window (`#settings-overlay`, built by `renderSettings()` from `settingsSections()`), opened by the topbar gear (`#settings-btn`). Every option lives in `state.settings` (persisted in the localStorage blob) and is applied by `applySettings()`. Toggles: theme, sidebar auto-hide, browse sections, genre tools, favorites, quality indicator, track rows (Comfortable / Compact / No covers), resume playback, confirm playlist delete, shuffle/repeat buttons, and the mini-player options below. `settings.rowDisplay` replaced the old separate `coverArt`/`compactDensity` toggles; `restore()` migrates the legacy keys
 - Sidebar autohide: when `settings.sidebarAutoHide` is on the sidebar collapses via `margin-left` (`html[data-sidebar="hidden"]`); a left-edge `#sidebar-handle` peeks it open (`html.sidebar-peek`), and `#sidebar-toggle` (topbar) pins it (`state.sidebarPinned`, persisted). Menu button + handle are hidden when autohide is off
 - Themes: `state.settings.theme` sets `document.documentElement.dataset.theme`; `:root[data-theme="teal"|"ocean"|"sage"]` blocks in `style.css` and `mini.css` override the palette vars (default `red` uses the plain `:root`). Theme travels to the mini window inside the `player-state` snapshot
 - Mini player: `state.settings.miniStyle` (`bar`/`card`/`minimal`), `miniSeek`/`miniVolume` add seek/volume rows, `miniStartCube` starts it collapsed, `miniAlwaysOnTop` toggles pinning. `state.miniMode` (`full`/`cube`) is a cover-only square; the cube button collapses, clicking the cover expands. `miniWindowSize()` computes the size and `applyMiniWindow()` sends it via `setMiniPlayerWindow` → main `miniplayer-config` IPC (`setBounds` + `setAlwaysOnTop`). Seek/volume/cube controls ride the existing `player-command` relay (`mini-mode` handled in `handlePlayerCommand`)
 - Resume playback (`settings.resumePlayback`): `state.lastPosition` is saved with the state; on launch `loadLibrary()` sets `audio.src` and restores the position via the `pendingResume` path (no autoplay)
+
+## Install & distribution
+- License is MIT (`LICENSE`); `package.json` carries `license`, `repository`, `homepage`, `bugs` and `engines` (`node >=20`), and `.nvmrc` pins 20
+- From source: `git clone` → `npm install` → `npm start` (the `postinstall` fetches Electron); `npm run dev` is an alias of `start`
+- One-line source installer: `scripts/install.ps1` — clones into `%LOCALAPPDATA%\AKU-PLAYER`, installs deps and adds Desktop/Start Menu shortcuts (pointing at `node_modules\electron\dist\electron.exe`, or `dist\AKU.exe` with `-Build`); `-Uninstall` reverses it. Served from the repo raw URL
+- Releases: `.github/workflows/release.yml` builds the portable exe on any `v*` tag (windows-latest, Node 20, `npm run dist`) and attaches `dist/AKU.exe` to the GitHub release. To publish, bump `package.json` `version` and push a matching tag
+- `.gitignore` excludes `node_modules/` and `dist/`; `build/` (icon) is committed. `.gitattributes` forces CRLF for `.ps1`/`.cmd`/`.bat`
+
+## Comments
+- Comments are used sparingly and explain *why*, not *what* — range/seek handling, ID stability, the iTunes rate limit, the mini relay, legacy settings migration. Match that style rather than narrating obvious lines
