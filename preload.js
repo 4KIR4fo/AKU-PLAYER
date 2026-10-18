@@ -1,5 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// The renderer runs sandboxed with no Node access; this is the only surface it
+// gets. Keep it to plain data and callbacks so nothing leaks over the bridge.
 contextBridge.exposeInMainWorld('aku', {
   chooseFolder: () => ipcRenderer.invoke('choose-folder'),
   getLibrary: () => ipcRenderer.invoke('get-library'),

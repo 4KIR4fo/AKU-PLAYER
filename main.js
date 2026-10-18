@@ -25,6 +25,8 @@ let lastPlayerState = null;
 
 app.setName('aku-player');
 
+// Audio is served over a custom media:// scheme rather than file:// so the
+// renderer's strict CSP (default-src 'none') can whitelist it explicitly.
 protocol.registerSchemesAsPrivileged([
   {
     scheme: 'media',
@@ -91,6 +93,8 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// iTunes has no documented quota, but hammering it gets requests dropped.
+// Space lookups at least a second apart to stay polite.
 async function itunesFetch(url) {
   const wait = ITUNES_MIN_INTERVAL - (Date.now() - itunesLastRequest);
   if (wait > 0) await sleep(wait);
@@ -163,6 +167,8 @@ ipcMain.on('categorize-cancel', () => {
   categorizeCancelled = true;
 });
 
+// IDs are derived from the file path so favorites and playlists survive a
+// rescan; renaming or moving a file does move it to a new ID.
 function trackId(filePath) {
   return crypto.createHash('sha1').update(filePath).digest('hex').slice(0, 16);
 }
@@ -196,6 +202,8 @@ function streamUrl(filePath) {
   return `media://stream/${encodeURIComponent(filePath)}`;
 }
 
+// Walked iteratively to survive deeply nested libraries without blowing the
+// stack; symlinked directories are skipped to avoid loops.
 async function walkAudioFiles(root) {
   const files = [];
   const stack = [root];
@@ -296,6 +304,8 @@ async function scanLibrary(root) {
   return tracks;
 }
 
+// Minimal parser for the single-range "bytes=start-end" form a media element
+// uses when seeking. Returns null for anything it can't confidently serve.
 function parseRange(rangeHeader, size) {
   const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader || '');
   if (!match) return null;
@@ -344,6 +354,8 @@ async function handleMediaRequest(request) {
     const mime = MIME_TYPES[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
     const range = parseRange(request.headers.get('Range'), stat.size);
     if (range) {
+      // 206 with a byte range is what lets the audio element seek without
+      // downloading the whole file up front.
       const stream = fs.createReadStream(filePath, { start: range.start, end: range.end });
       return new Response(Readable.toWeb(stream), {
         status: 206,

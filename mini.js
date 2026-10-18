@@ -1,3 +1,6 @@
+// The mini player is a remote control, not a second player: the audio element
+// lives in the main window. Buttons here send player-command messages through
+// main, and the main window pushes player-state back for us to render.
 const els = {};
 let draggingSeek = false;
 let draggingVolume = false;
