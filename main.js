@@ -51,6 +51,88 @@ function saveConfig(config) {
   fs.writeFileSync(configPath(), JSON.stringify(config, null, 2));
 }
 
+// The library is a set of sources: whole folders and/or individual files. Older
+// builds stored a single `libraryRoot`, so fold that in on read.
+function normalizeSources(config) {
+  const sources = [];
+  const seen = new Set();
+  const push = (p, type) => {
+    if (typeof p !== 'string' || !p || seen.has(p)) return;
+    seen.add(p);
+    sources.push({ path: p, type: type === 'file' ? 'file' : 'folder' });
+  };
+  if (Array.isArray(config.sources)) {
+    for (const source of config.sources) {
+      if (source && typeof source.path === 'string') push(source.path, source.type);
+    }
+  }
+  if (typeof config.libraryRoot === 'string') push(config.libraryRoot, 'folder');
+  return sources;
+}
+
+function writeSources(sources) {
+  const config = loadConfig();
+  config.sources = sources;
+  delete config.libraryRoot;
+  saveConfig(config);
+}
+
+// Songs the user removed from the library. We only remember the path (plus a
+// title/artist for the settings list); the file itself is never touched.
+function normalizeHidden(config) {
+  const out = [];
+  const seen = new Set();
+  if (Array.isArray(config.hidden)) {
+    for (const entry of config.hidden) {
+      if (!entry || typeof entry.path !== 'string' || !entry.path || seen.has(entry.path)) continue;
+      seen.add(entry.path);
+      out.push({
+        path: entry.path,
+        title: typeof entry.title === 'string' ? entry.title : '',
+        artist: typeof entry.artist === 'string' ? entry.artist : ''
+      });
+    }
+  }
+  return out;
+}
+
+function readDedupe(config) {
+  return config.dedupe !== false;
+}
+
+function writeHidden(hidden) {
+  const config = loadConfig();
+  config.hidden = hidden;
+  saveConfig(config);
+}
+
+function writeDedupe(on) {
+  const config = loadConfig();
+  config.dedupe = !!on;
+  saveConfig(config);
+}
+
+// Paths the user chose to keep even though they look like duplicates of another
+// track. Read as an ordered, de-duplicated list of strings.
+function readDupesKept(config) {
+  const out = [];
+  const seen = new Set();
+  if (Array.isArray(config.dupesKept)) {
+    for (const filePath of config.dupesKept) {
+      if (typeof filePath !== 'string' || !filePath || seen.has(filePath)) continue;
+      seen.add(filePath);
+      out.push(filePath);
+    }
+  }
+  return out;
+}
+
+function writeDupesKept(paths) {
+  const config = loadConfig();
+  config.dupesKept = paths;
+  saveConfig(config);
+}
+
 const ITUNES_BASE = 'https://itunes.apple.com/search';
 const ITUNES_MIN_INTERVAL = 1000;
 let itunesLastRequest = 0;
@@ -87,6 +169,16 @@ function normalizeText(text) {
 
 function normKey(artist, title) {
   return `${normalizeText(artist)}|${normalizeText(title)}`;
+}
+
+// A duplicate needs an identifiable title AND artist. Files with no real artist
+// (the "Unknown artist" fallback) or no title are never merged, so unrelated
+// tracks that happen to share a name are kept apart.
+function dupeKey(track) {
+  const title = normalizeText(track.title);
+  const artist = normalizeText(track.artist);
+  if (!title || !artist || artist === 'unknown' || artist === 'unknown artist') return null;
+  return `${artist}|${title}`;
 }
 
 function sleep(ms) {
@@ -291,17 +383,134 @@ async function readTrackTags(filePath) {
   }
 }
 
-async function scanLibrary(root) {
+// One source can contribute thousands of files and several sources can overlap,
+// so flatten everything into a de-duplicated list first. Hidden paths are
+// skipped here so a removed song never gets read again.
+async function collectAudioFiles(sources, hiddenSet) {
+  const seen = new Set();
+  const files = [];
+  for (const source of sources) {
+    if (source.type === 'file') {
+      if (AUDIO_EXTS.has(path.extname(source.path).toLowerCase()) &&
+        !seen.has(source.path) && !hiddenSet.has(source.path)) {
+        seen.add(source.path);
+        files.push(source.path);
+      }
+      continue;
+    }
+    for (const file of await walkAudioFiles(source.path)) {
+      if (seen.has(file) || hiddenSet.has(file)) continue;
+      seen.add(file);
+      files.push(file);
+    }
+  }
+  return files;
+}
+
+// Higher is better; used to pick which copy of a duplicate to keep. Lossless
+// first, then bit depth, then sample rate, then bitrate.
+function qualityRank(track) {
+  const q = track.quality;
+  if (!q) return -1;
+  return (q.lossless ? 1 : 0) * 1e12 +
+    (q.bitsPerSample || 0) * 1e9 +
+    (q.sampleRate || 0) * 1e3 +
+    (q.bitrate || 0);
+}
+
+// id -> { path, title, artist } for the last scan, so the renderer can ask to
+// hide a track by id without ever seeing filesystem paths.
+let trackIndex = new Map();
+
+async function scanLibrary(sources, options = {}) {
   coverCache.clear();
-  const files = await walkAudioFiles(root);
+  const hiddenSet = new Set(options.hidden || []);
+  const pins = new Set(options.dupesKept || []);
+  const dedupe = options.dedupe !== false;
+  const files = await collectAudioFiles(sources, hiddenSet);
   const tracks = [];
+  const index = new Map();
+  const byPath = new Map();
   for (let i = 0; i < files.length; i++) {
-    tracks.push(await readTrackTags(files[i]));
+    const track = await readTrackTags(files[i]);
+    index.set(track.id, { path: files[i], title: track.title, artist: track.artist });
+    byPath.set(files[i], track);
+    tracks.push(track);
     if (mainWindow && !mainWindow.isDestroyed() && (i % 5 === 0 || i === files.length - 1)) {
       mainWindow.webContents.send('scan-progress', { done: i + 1, total: files.length });
     }
   }
-  return tracks;
+
+  const dupesKept = files
+    .filter((file) => pins.has(file))
+    .map((file) => {
+      const track = byPath.get(file);
+      return { id: track.id, title: track.title, artist: track.artist };
+    });
+
+  let duplicates = 0;
+  let ignored = [];
+  let kept = tracks;
+  if (dedupe) {
+    const groups = new Map();
+    for (const track of tracks) {
+      const key = dupeKey(track);
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(track);
+    }
+    const winners = new Set();
+    for (const group of groups.values()) {
+      // Every pinned copy stays, plus the best of the rest.
+      const pinned = group.filter((track) => pins.has(index.get(track.id).path));
+      const rest = group.filter((track) => !pinned.includes(track));
+      let best = null;
+      for (const track of rest) {
+        if (!best || qualityRank(track) > qualityRank(best)) best = track;
+      }
+      const survivors = best ? pinned.concat(best) : pinned;
+      for (const track of survivors) winners.add(track);
+      const survivor = survivors[0];
+      for (const track of group) {
+        if (winners.has(track)) continue;
+        duplicates++;
+        ignored.push({
+          id: track.id,
+          title: track.title,
+          artist: track.artist,
+          duration: track.duration,
+          keptTitle: survivor ? survivor.title : '',
+          keptArtist: survivor ? survivor.artist : ''
+        });
+      }
+    }
+    if (duplicates) kept = tracks.filter((track) => !dupeKey(track) || winners.has(track));
+  }
+
+  trackIndex = index;
+  return { tracks: kept, duplicates, ignored, dupesKept };
+}
+
+async function libraryPayload(sources) {
+  if (!sources.length) return null;
+  const config = loadConfig();
+  const hidden = normalizeHidden(config);
+  const dedupe = readDedupe(config);
+  const dupesKept = readDupesKept(config);
+  const result = await scanLibrary(sources, {
+    hidden: hidden.map((entry) => entry.path),
+    dedupe,
+    dupesKept
+  });
+  return {
+    sources,
+    tracks: result.tracks,
+    hidden,
+    dedupe,
+    duplicates: result.duplicates,
+    ignored: result.ignored,
+    dupesKept: result.dupesKept
+  };
 }
 
 // Minimal parser for the single-range "bytes=start-end" form a media element
@@ -491,27 +700,88 @@ ipcMain.on('player-command', (_event, command) => {
   }
 });
 
-ipcMain.handle('choose-folder', async () => {
+async function pickSources(type) {
+  const isFile = type === 'file';
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Choose your music folder',
-    properties: ['openDirectory']
+    title: isFile ? 'Add music files' : 'Add a music folder',
+    properties: isFile ? ['openFile', 'multiSelections'] : ['openDirectory', 'multiSelections']
   });
-  if (result.canceled || !result.filePaths.length) {
-    return null;
+  if (result.canceled || !result.filePaths.length) return null;
+  const sources = normalizeSources(loadConfig());
+  const seen = new Set(sources.map((source) => source.path));
+  for (const picked of result.filePaths) {
+    if (isFile && !AUDIO_EXTS.has(path.extname(picked).toLowerCase())) continue;
+    if (seen.has(picked)) continue;
+    seen.add(picked);
+    sources.push({ path: picked, type: isFile ? 'file' : 'folder' });
   }
-  const root = result.filePaths[0];
-  const config = loadConfig();
-  config.libraryRoot = root;
-  saveConfig(config);
-  const tracks = await scanLibrary(root);
-  return { folder: root, tracks };
+  writeSources(sources);
+  return libraryPayload(sources);
+}
+
+ipcMain.handle('add-folder', () => pickSources('folder'));
+ipcMain.handle('add-files', () => pickSources('file'));
+
+ipcMain.handle('remove-source', async (_event, target) => {
+  const sources = normalizeSources(loadConfig()).filter((source) => source.path !== target);
+  writeSources(sources);
+  return libraryPayload(sources);
 });
 
 ipcMain.handle('get-library', async () => {
-  const config = loadConfig();
-  if (!config.libraryRoot) return null;
-  const tracks = await scanLibrary(config.libraryRoot);
-  return { folder: config.libraryRoot, tracks };
+  return libraryPayload(normalizeSources(loadConfig()));
+});
+
+ipcMain.handle('set-dedupe', async (_event, on) => {
+  writeDedupe(on);
+  return libraryPayload(normalizeSources(loadConfig()));
+});
+
+ipcMain.handle('hide-tracks', async (_event, ids) => {
+  const hidden = normalizeHidden(loadConfig());
+  const seen = new Set(hidden.map((entry) => entry.path));
+  for (const id of Array.isArray(ids) ? ids : []) {
+    const info = trackIndex.get(id);
+    if (!info || seen.has(info.path)) continue;
+    seen.add(info.path);
+    hidden.push(info);
+  }
+  writeHidden(hidden);
+  return libraryPayload(normalizeSources(loadConfig()));
+});
+
+ipcMain.handle('restore-tracks', async (_event, paths) => {
+  const drop = new Set(Array.isArray(paths) ? paths : []);
+  writeHidden(normalizeHidden(loadConfig()).filter((entry) => !drop.has(entry.path)));
+  return libraryPayload(normalizeSources(loadConfig()));
+});
+
+ipcMain.handle('restore-all-hidden', async () => {
+  writeHidden([]);
+  return libraryPayload(normalizeSources(loadConfig()));
+});
+
+ipcMain.handle('restore-duplicates', async (_event, ids) => {
+  const kept = readDupesKept(loadConfig());
+  const seen = new Set(kept);
+  for (const id of Array.isArray(ids) ? ids : []) {
+    const info = trackIndex.get(id);
+    if (!info || seen.has(info.path)) continue;
+    seen.add(info.path);
+    kept.push(info.path);
+  }
+  writeDupesKept(kept);
+  return libraryPayload(normalizeSources(loadConfig()));
+});
+
+ipcMain.handle('ignore-duplicates', async (_event, ids) => {
+  const drop = new Set();
+  for (const id of Array.isArray(ids) ? ids : []) {
+    const info = trackIndex.get(id);
+    if (info) drop.add(info.path);
+  }
+  writeDupesKept(readDupesKept(loadConfig()).filter((filePath) => !drop.has(filePath)));
+  return libraryPayload(normalizeSources(loadConfig()));
 });
 
 app.whenReady().then(() => {

@@ -44,6 +44,39 @@
   --hover: rgba(92, 131, 116, 0.35);
 }
 
+:root[data-theme="forest"] {
+  --bg: #2c3639;
+  --panel: #3f4e4f;
+  --accent-dim: #715640;
+  --accent: #a27b5c;
+  --text: #dcd7c9;
+  --muted: rgba(220, 215, 201, 0.6);
+  --border: rgba(162, 123, 92, 0.55);
+  --hover: rgba(162, 123, 92, 0.3);
+}
+
+:root[data-theme="regal"] {
+  --bg: #000000;
+  --panel: #8e1616;
+  --accent-dim: #8a7351;
+  --accent: #e8c999;
+  --text: #f8eedf;
+  --muted: rgba(248, 238, 223, 0.6);
+  --border: rgba(232, 201, 153, 0.5);
+  --hover: rgba(142, 22, 22, 0.4);
+}
+
+:root[data-theme="terracotta"] {
+  --bg: #fcf2e5;
+  --panel: #a8a492;
+  --accent-dim: #f5c4b3;
+  --accent: #ec5b38;
+  --text: #524646;
+  --muted: rgba(82, 70, 70, 0.6);
+  --border: rgba(82, 70, 70, 0.25);
+  --hover: rgba(168, 164, 146, 0.35);
+}
+
 html, body { height: 100%; }
 
 body {

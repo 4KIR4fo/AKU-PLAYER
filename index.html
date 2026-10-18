@@ -19,6 +19,8 @@
   <symbol id="icon-genre" viewBox="0 0 24 24"><path d="M21.41 11.58l-9-9C12.05 2.22 11.55 2 11 2H4c-1.1 0-2 .9-2 2v7c0 .55.22 1.05.59 1.42l9 9c.36.36.86.58 1.41.58s1.05-.22 1.41-.59l7-7c.37-.36.59-.86.59-1.41s-.23-1.06-.59-1.42zM5.5 7C4.67 7 4 6.33 4 5.5S4.67 4 5.5 4 7 4.67 7 5.5 6.33 7 5.5 7z"/></symbol>
   <symbol id="icon-categorize" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></symbol>
   <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></symbol>
+  <symbol id="icon-queue" viewBox="0 0 24 24"><path d="M3 6h13v2H3zm0 5h13v2H3zm0 5h9v2H3zm12-1l6-3.5-6-3.5z"/></symbol>
+  <symbol id="icon-builder" viewBox="0 0 24 24"><path d="M11 2l1.7 4.5L17 8l-4.3 1.5L11 14l-1.7-4.5L5 8l4.3-1.5zM6 15l1.1 2.9L10 19l-2.9 1.1L6 23l-1.1-2.9L2 19l2.9-1.1z"/></symbol>
   <symbol id="icon-settings" viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84a.48.48 0 0 0-.48.41l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.48.48 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.48-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></symbol>
 </svg>
 
@@ -37,6 +39,7 @@
     <div class="playlists-header">
       <span>Playlists</span>
       <div class="playlists-actions">
+        <button id="playlist-builder" class="icon-btn" title="Playlist builder"><svg><use href="#icon-builder"/></svg></button>
         <button id="categorize-btn" class="icon-btn" title="Find genres by artist and title"><svg><use href="#icon-categorize"/></svg></button>
         <button id="genre-maker" class="icon-btn" title="Make playlists by genre"><svg><use href="#icon-genre"/></svg></button>
         <button id="new-playlist" class="icon-btn" title="New playlist">+</button>
@@ -53,10 +56,11 @@
       <h1 id="view-title">Library</h1>
       <input id="search" type="search" placeholder="Search title, artist, album">
       <button id="settings-btn" class="icon-btn" title="Settings"><svg><use href="#icon-settings"/></svg></button>
-      <button id="choose-folder" class="accent-btn">Choose music folder</button>
+      <button id="choose-folder" class="accent-btn">Add music</button>
     </header>
     <div id="status"></div>
     <div id="track-list"></div>
+    <div id="sel-bar" class="hidden"></div>
   </main>
 </div>
 
@@ -69,6 +73,7 @@
     </div>
   </div>
   <button id="quality-btn" class="quality-btn" title="Audio quality">&#8212;</button>
+  <button id="queue-btn" class="icon-btn" title="Queue"><svg><use href="#icon-queue"/></svg></button>
   <button id="mini-btn" class="icon-btn" title="Mini player"><svg><use href="#icon-mini"/></svg></button>
   <div id="controls">
     <div id="control-buttons">
@@ -91,8 +96,16 @@
 </footer>
 
 <div id="row-menu" class="hidden"></div>
+<div id="add-menu" class="hidden"></div>
 <div id="quality-popover" class="hidden"></div>
 <div id="genre-popover" class="hidden"></div>
+<aside id="queue-panel" class="hidden">
+  <header id="queue-header">
+    <span>Queue</span>
+    <button id="queue-close" class="icon-btn" title="Close">&#10005;</button>
+  </header>
+  <div id="queue-list"></div>
+</aside>
 <div id="settings-overlay" class="hidden">
   <div id="settings-panel" role="dialog" aria-label="Settings">
     <header id="settings-header">
@@ -100,6 +113,18 @@
       <button id="settings-close" class="icon-btn" title="Close">&#10005;</button>
     </header>
     <div id="settings-body"></div>
+  </div>
+</div>
+<div id="builder-overlay" class="hidden">
+  <div id="builder-panel" role="dialog" aria-label="Playlist builder">
+    <header id="builder-header">
+      <span id="builder-title">Playlist builder</span>
+      <div class="builder-header-actions">
+        <button id="builder-save" class="accent-btn">Save playlist</button>
+        <button id="builder-close" class="icon-btn" title="Close">&#10005;</button>
+      </div>
+    </header>
+    <div id="builder-body"></div>
   </div>
 </div>
 <script src="renderer.js"></script>

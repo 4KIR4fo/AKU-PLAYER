@@ -4,6 +4,38 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Multiple music sources: add any number of folders and/or individual files
+  (Settings → Library, or the topbar "Add music" menu), all indexed into one
+  library
+- Multi-select track rows (Ctrl/Cmd-click to toggle, Shift-click for a range)
+  with a bulk action bar: play, queue, favorite, add to a playlist
+- Queue panel showing the current and upcoming tracks, with click-to-jump and
+  "add to queue" from the selection bar
+- Playlist builder: mix any number of genres, albums, artists, eras and years
+  into one playlist, add individual tracks by hand, drag sources to reorder, and
+  optionally keep the playlist live so it updates as the library changes
+- Duplicate handling: songs with the same title **and** artist are collapsed to
+  the best-quality copy (lossless/bit depth/sample rate/bitrate); files with no
+  real artist (or no title) are never merged, and it can be toggled in
+  Settings → Library
+- View and restore ignored duplicates (Settings → Library): each ignored copy can
+  be kept after all, and restored copies can be ignored again
+- Remove-from-library: the ⊘ track action (and a Remove bulk action) takes a song
+  out of the library without touching the file; removed songs are listed under
+  Settings → Hidden songs with per-song and "Restore all" actions
+- Three new themes: Forest, Regal and Terracotta (the first light theme)
+
+### Changed
+
+- The library config now stores a list of sources and migrates the previous
+  single-folder setting
+- Filled buttons (`.accent-btn`, the repeat-one badge) pick their text colour
+  from a per-theme `--accent-text`, so light accents stay readable
+
 ## [0.3.0] - 2026-10-18
 
 ### Added

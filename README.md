@@ -15,11 +15,17 @@ no upload, no cloud.
 - **Browse views** — Albums, Artists, Genres and Eras, each with its own detail page
 - **Search** — filters group names on browse pages, track names everywhere else
 - **Queue, shuffle and repeat**, plus favorites and playlists
+- **Duplicate handling** — keeps the best-quality copy of the same title and
+  artist, leaves songs without an artist alone, and lets you view and restore
+  ignored copies (on by default, toggle in Settings)
+- **Remove from library without deleting** — the ⊘ button (or the selection bar)
+  hides a song; restore it any time from Settings → Hidden songs
 - **Genre tools** — group tracks into auto playlists, or fill in missing genres
   from the iTunes Search API
 - **Mini player** — a compact always-on-top window (Bar / Card / Minimal styles,
   plus a cover-only cube) that remote-controls the main window
-- **Themes** — Crimson (default), Terminal, Ocean and Sage
+- **Themes** — Crimson (default), Terminal, Ocean, Sage, Forest, Regal and
+  Terracotta (light)
 - **Resume playback**, configurable display density, and more in Settings
 
 ## Install

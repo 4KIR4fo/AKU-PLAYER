@@ -22,23 +22,35 @@ const THEMES = [
   { key: 'red', name: 'Crimson' },
   { key: 'teal', name: 'Terminal' },
   { key: 'ocean', name: 'Ocean' },
-  { key: 'sage', name: 'Sage' }
+  { key: 'sage', name: 'Sage' },
+  { key: 'forest', name: 'Forest' },
+  { key: 'regal', name: 'Regal' },
+  { key: 'terracotta', name: 'Terracotta' }
 ];
 
 const audio = new Audio();
 let seekDragging = false;
-let pendingPlaylistTrackId = null;
+let pendingPlaylistIds = [];
 let qualityPopoverTrackId;
 
 const state = {
-  folder: null,
+  sources: [],
   tracks: [],
   view: { type: 'library' },
   search: '',
   favorites: new Set(),
   playlists: [],
   queue: [],
+  queueOpen: false,
   currentId: null,
+  selection: new Set(),
+  selAnchor: null,
+  // Duplicate-handling lives in config.json (main), not localStorage.
+  dedupe: true,
+  hidden: [],
+  duplicates: 0,
+  ignored: [],
+  dupesKept: [],
   lastTrackId: null,
   shuffle: false,
   repeat: 'off',
@@ -60,12 +72,15 @@ function initEls() {
   els.trackList = $('track-list');
   els.search = $('search');
   els.chooseFolder = $('choose-folder');
+  els.addMenu = $('add-menu');
   els.status = $('status');
+  els.selBar = $('sel-bar');
   els.viewTitle = $('view-title');
   els.playlistList = $('playlist-list');
   els.newPlaylist = $('new-playlist');
   els.newPlaylistRow = $('new-playlist-row');
   els.newPlaylistInput = $('new-playlist-input');
+  els.playlistBuilder = $('playlist-builder');
   els.genreMaker = $('genre-maker');
   els.genrePopover = $('genre-popover');
   els.categorizeBtn = $('categorize-btn');
@@ -87,6 +102,10 @@ function initEls() {
   els.qualityBtn = $('quality-btn');
   els.qualityPopover = $('quality-popover');
   els.miniBtn = $('mini-btn');
+  els.queueBtn = $('queue-btn');
+  els.queuePanel = $('queue-panel');
+  els.queueList = $('queue-list');
+  els.queueClose = $('queue-close');
   els.sidebarToggle = $('sidebar-toggle');
   els.sidebarHandle = $('sidebar-handle');
   els.sidebar = $('sidebar');
@@ -94,6 +113,11 @@ function initEls() {
   els.settingsOverlay = $('settings-overlay');
   els.settingsBody = $('settings-body');
   els.settingsClose = $('settings-close');
+  els.builderOverlay = $('builder-overlay');
+  els.builderBody = $('builder-body');
+  els.builderTitle = $('builder-title');
+  els.builderSave = $('builder-save');
+  els.builderClose = $('builder-close');
 }
 
 function fmtTime(seconds) {
@@ -265,7 +289,7 @@ function baseTracks() {
   }
   if (state.view.type === 'playlist') {
     const playlist = state.playlists.find((pl) => pl.name === state.view.name);
-    const ids = playlist ? playlist.trackIds : [];
+    const ids = playlist ? playlistTrackIds(playlist) : [];
     return ids.map(trackById).filter(Boolean);
   }
   if (state.view.type === 'album') {
@@ -406,19 +430,37 @@ function renderSidebar() {
       tag.title = 'Auto-generated from genre';
       tag.textContent = '\u266A';
       name.prepend(tag);
+    } else if (playlist.live) {
+      const tag = document.createElement('span');
+      tag.className = 'auto-tag';
+      tag.title = 'Live playlist built from sources';
+      tag.textContent = '\u21BB';
+      name.prepend(tag);
     }
 
     const del = document.createElement('button');
     del.className = 'delete-playlist';
     del.title = 'Delete playlist';
     del.textContent = '\u2715';
-
-    li.append(name, del);
-    li.addEventListener('click', () => setView({ type: 'playlist', name: playlist.name }));
     del.addEventListener('click', (event) => {
       event.stopPropagation();
       deletePlaylist(playlist.name);
     });
+
+    li.addEventListener('click', () => setView({ type: 'playlist', name: playlist.name }));
+    if (playlist.live || Array.isArray(playlist.sources)) {
+      const edit = document.createElement('button');
+      edit.className = 'edit-playlist';
+      edit.title = 'Edit in builder';
+      edit.textContent = '\u270E';
+      edit.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openBuilder(playlist);
+      });
+      li.append(name, edit, del);
+    } else {
+      li.append(name, del);
+    }
     els.playlistList.appendChild(li);
   }
 
@@ -426,16 +468,28 @@ function renderSidebar() {
 }
 
 function updateStatus() {
-  if (state.folder) {
-    els.status.textContent = `${state.tracks.length} tracks \u2014 ${state.folder}`;
-  } else {
+  const sources = state.sources.length;
+  if (!sources) {
     els.status.textContent = '';
+    return;
   }
+  const count = state.tracks.length;
+  const parts = [`${count} track${count === 1 ? '' : 's'} \u2014 ${sources} source${sources === 1 ? '' : 's'}`];
+  if (state.dedupe && state.duplicates) {
+    parts.push(`${state.duplicates} duplicate${state.duplicates === 1 ? '' : 's'} ignored`);
+  }
+  if (state.hidden.length) {
+    parts.push(`${state.hidden.length} hidden`);
+  }
+  els.status.textContent = parts.join(' \u2014 ');
 }
 
 function buildRow(track) {
   const row = document.createElement('div');
-  row.className = 'track-row' + (track.id === state.currentId ? ' playing' : '');
+  const selected = state.selection.has(track.id);
+  row.className = 'track-row' +
+    (track.id === state.currentId ? ' playing' : '') +
+    (selected ? ' selected' : '');
   row.dataset.id = track.id;
 
   const cover = document.createElement('div');
@@ -481,7 +535,12 @@ function buildRow(track) {
   add.title = 'Add to playlist';
   add.textContent = '+';
 
-  actions.append(fav, add);
+  const hide = document.createElement('button');
+  hide.className = 'hide-btn';
+  hide.title = 'Remove from library (keeps the file)';
+  hide.textContent = '\u2298';
+
+  actions.append(fav, add, hide);
   row.append(cover, title, artist, album, duration, actions);
   return row;
 }
@@ -494,12 +553,12 @@ function renderTrackList() {
     els.trackList.replaceChildren();
     const empty = document.createElement('div');
     empty.className = 'empty-state';
-    if (!state.folder) {
-      empty.textContent = 'No music yet. Pick a folder and AKU will index what it finds.';
+    if (!state.sources.length) {
+      empty.textContent = 'No music yet. Add folders or files and AKU will index what it finds.';
       const btn = document.createElement('button');
       btn.className = 'accent-btn';
-      btn.textContent = 'Choose music folder';
-      btn.addEventListener('click', chooseFolder);
+      btn.textContent = 'Add music';
+      btn.addEventListener('click', () => openAddMenu(btn));
       empty.appendChild(document.createElement('br'));
       empty.appendChild(btn);
     } else if (state.search.trim()) {
@@ -507,11 +566,11 @@ function renderTrackList() {
     } else if (state.view.type === 'favorites') {
       empty.textContent = 'No favorites yet. Click the heart on any track.';
     } else if (state.view.type === 'playlist') {
-      empty.textContent = 'This playlist is empty. Use the + button on a track to add it.';
+      empty.textContent = 'This playlist is empty. Use the + button on a track, or build it from genres and albums.';
     } else if (['album', 'artist', 'genre', 'era'].includes(state.view.type)) {
       empty.textContent = 'No tracks in here yet.';
     } else {
-      empty.textContent = 'No audio files found in this folder.';
+      empty.textContent = 'No audio files found in these sources.';
     }
     els.trackList.appendChild(empty);
   } else {
@@ -521,6 +580,7 @@ function renderTrackList() {
   }
 
   els.trackList.scrollTop = scrollTop;
+  renderSelectionBar();
 }
 
 function browseConfig() {
@@ -773,6 +833,7 @@ function playTrack(id, listIds) {
   updatePlayerBar();
   renderTrackList();
   broadcastState(true);
+  if (state.queueOpen) renderQueue();
 }
 
 function togglePlay() {
@@ -849,47 +910,275 @@ function toggleFavorite(id) {
   renderTrackList();
 }
 
-function chooseFolder() {
-  els.status.textContent = 'Waiting for folder selection\u2026';
-  window.aku.chooseFolder().then((result) => {
-    if (!result) {
-      updateStatus();
-      return;
-    }
-    state.folder = result.folder;
-    state.tracks = result.tracks;
-    if (state.currentId && !trackById(state.currentId)) {
-      state.currentId = null;
-      audio.pause();
-      audio.removeAttribute('src');
-      audio.load();
-    }
+function applyLibrary(result) {
+  if (!result) {
     updateStatus();
-    updatePlayerBar();
     renderMain();
+    return;
+  }
+  state.sources = Array.isArray(result.sources) ? result.sources : [];
+  state.tracks = Array.isArray(result.tracks) ? result.tracks : [];
+  state.dedupe = result.dedupe !== false;
+  state.hidden = Array.isArray(result.hidden) ? result.hidden : [];
+  state.duplicates = Number(result.duplicates) || 0;
+  state.ignored = Array.isArray(result.ignored) ? result.ignored : [];
+  state.dupesKept = Array.isArray(result.dupesKept) ? result.dupesKept : [];
+  pruneSelection();
+  recomputeLivePlaylists();
+  if (state.currentId && !trackById(state.currentId)) {
+    state.currentId = null;
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+  }
+  updateStatus();
+  updatePlayerBar();
+  renderSidebar();
+  renderMain();
+  if (state.queueOpen) renderQueue();
+  if (!els.builderOverlay.classList.contains('hidden')) renderBuilder();
+  if (!els.settingsOverlay.classList.contains('hidden')) renderSettings();
+}
+
+async function addSource(type) {
+  els.status.textContent = type === 'file'
+    ? 'Waiting for file selection\u2026'
+    : 'Waiting for folder selection\u2026';
+  const result = type === 'file' ? await window.aku.addFiles() : await window.aku.addFolder();
+  applyLibrary(result);
+}
+
+async function removeSource(sourcePath) {
+  const result = await window.aku.removeSource(sourcePath);
+  applyLibrary(result);
+}
+
+async function hideTracks(ids) {
+  const valid = ids.filter((id) => trackById(id));
+  if (!valid.length) return;
+  const noun = valid.length === 1 ? 'song' : 'songs';
+  if (!confirm(`Remove ${valid.length} ${noun} from the library? The files stay on disk.`)) return;
+  clearSelection();
+  applyLibrary(await window.aku.hideTracks(valid));
+}
+
+async function restoreTracks(paths) {
+  applyLibrary(await window.aku.restoreTracks(paths));
+}
+
+async function restoreAllHidden() {
+  applyLibrary(await window.aku.restoreAllHidden());
+}
+
+async function restoreDuplicates(ids) {
+  if (!ids.length) return;
+  applyLibrary(await window.aku.restoreDuplicates(ids));
+}
+
+async function restoreAllDuplicates() {
+  await restoreDuplicates(state.ignored.map((entry) => entry.id));
+}
+
+async function ignoreDuplicates(ids) {
+  if (!ids.length) return;
+  applyLibrary(await window.aku.ignoreDuplicates(ids));
+}
+
+async function setDedupe(on) {
+  applyLibrary(await window.aku.setDedupe(on));
+}
+
+function openAddMenu(anchor) {
+  const menu = els.addMenu;
+  menu.replaceChildren();
+  const add = (label, fn) => {
+    const item = document.createElement('button');
+    item.className = 'menu-item';
+    item.textContent = label;
+    item.addEventListener('click', () => {
+      closeAddMenu();
+      fn();
+    });
+    menu.appendChild(item);
+  };
+  add('Add folder\u2026', () => addSource('folder'));
+  add('Add files\u2026', () => addSource('file'));
+
+  menu.classList.remove('hidden');
+  const rect = anchor.getBoundingClientRect();
+  const width = menu.offsetWidth;
+  const height = menu.offsetHeight;
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+  const top = rect.bottom + 6 + height > window.innerHeight
+    ? Math.max(8, rect.top - height - 6)
+    : rect.bottom + 6;
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+}
+
+function closeAddMenu() {
+  els.addMenu.classList.add('hidden');
+}
+
+function pruneSelection() {
+  for (const id of [...state.selection]) {
+    if (!trackById(id)) state.selection.delete(id);
+  }
+  if (state.selAnchor && !trackById(state.selAnchor)) state.selAnchor = null;
+}
+
+function clearSelection() {
+  if (!state.selection.size && !state.selAnchor) return;
+  state.selection.clear();
+  state.selAnchor = null;
+  renderTrackList();
+}
+
+function toggleSelection(id) {
+  if (state.selection.has(id)) state.selection.delete(id);
+  else state.selection.add(id);
+  state.selAnchor = id;
+  renderTrackList();
+}
+
+function selectRange(fromId, toId, additive) {
+  const list = visibleTracks().map((track) => track.id);
+  const a = list.indexOf(fromId);
+  const b = list.indexOf(toId);
+  if (a === -1 || b === -1) return;
+  if (!additive) state.selection.clear();
+  const [start, end] = a <= b ? [a, b] : [b, a];
+  for (let i = start; i <= end; i++) state.selection.add(list[i]);
+  renderTrackList();
+}
+
+function selectedIds() {
+  return visibleTracks().filter((track) => state.selection.has(track.id)).map((track) => track.id);
+}
+
+function setFavorite(ids, value) {
+  for (const id of ids) {
+    if (value) state.favorites.add(id);
+    else state.favorites.delete(id);
+  }
+  persist();
+  renderTrackList();
+}
+
+function renderSelectionBar() {
+  const bar = els.selBar;
+  const ids = selectedIds();
+  if (!ids.length) {
+    bar.classList.add('hidden');
+    bar.replaceChildren();
+    return;
+  }
+  bar.replaceChildren();
+
+  const count = document.createElement('span');
+  count.className = 'sel-count';
+  count.textContent = `${ids.length} selected`;
+  bar.appendChild(count);
+
+  const make = (label, fn) => {
+    const btn = document.createElement('button');
+    btn.className = 'ghost-btn';
+    btn.textContent = label;
+    btn.addEventListener('click', fn);
+    bar.appendChild(btn);
+    return btn;
+  };
+  make('Play', () => {
+    clearSelection();
+    playTrack(ids[0], ids);
   });
+  make('Queue', () => addToQueue(ids));
+  make('Favorite', () => setFavorite(ids, !ids.every((id) => state.favorites.has(id))));
+  const addBtn = make('Add to playlist\u2026', () => {});
+  addBtn.addEventListener('click', () => openPlaylistMenu(ids, addBtn));
+  make('Remove', () => hideTracks(ids));
+  make('Clear', () => clearSelection());
+
+  bar.classList.remove('hidden');
+}
+
+function addToQueue(ids) {
+  const valid = ids.filter((id) => trackById(id));
+  if (!valid.length) return;
+  const queue = state.queue.slice();
+  if (!queue.length) queue.push(...visibleTracks().map((track) => track.id));
+  const at = state.currentId ? queue.indexOf(state.currentId) : -1;
+  const insertAt = at === -1 ? queue.length : at + 1;
+  queue.splice(insertAt, 0, ...valid.filter((id) => !queue.includes(id)));
+  state.queue = queue;
+  persist();
+  if (state.queueOpen) renderQueue();
+  els.status.textContent = `Queued ${valid.length} track${valid.length === 1 ? '' : 's'}.`;
+}
+
+function renderQueue() {
+  els.queueList.replaceChildren();
+  if (!state.queue.length) {
+    const empty = document.createElement('div');
+    empty.className = 'queue-empty';
+    empty.textContent = 'The queue is empty. Play something to fill it.';
+    els.queueList.appendChild(empty);
+    return;
+  }
+  state.queue.forEach((id, index) => {
+    const track = trackById(id);
+    if (!track) return;
+    const item = document.createElement('button');
+    item.className = 'queue-item' + (id === state.currentId ? ' current' : '');
+    const num = document.createElement('span');
+    num.className = 'queue-index';
+    num.textContent = String(index + 1);
+    const meta = document.createElement('span');
+    meta.className = 'queue-meta';
+    const title = document.createElement('span');
+    title.className = 'queue-title';
+    title.textContent = track.title;
+    const artist = document.createElement('span');
+    artist.className = 'queue-artist';
+    artist.textContent = track.artist;
+    meta.append(title, artist);
+    item.append(num, meta);
+    item.addEventListener('click', () => playTrack(id, state.queue));
+    els.queueList.appendChild(item);
+  });
+  const current = els.queueList.querySelector('.queue-item.current');
+  if (current) current.scrollIntoView({ block: 'nearest' });
+}
+
+function toggleQueue(force) {
+  const open = typeof force === 'boolean' ? force : !state.queueOpen;
+  state.queueOpen = open;
+  els.queuePanel.classList.toggle('hidden', !open);
+  els.queueBtn.classList.toggle('active', open);
+  if (open) renderQueue();
 }
 
 function closeRowMenu() {
   els.rowMenu.classList.add('hidden');
 }
 
-function openRowMenu(trackId, anchor) {
+function openPlaylistMenu(ids, anchor) {
   const menu = els.rowMenu;
   menu.replaceChildren();
 
   for (const playlist of state.playlists) {
+    const included = ids.every((id) => playlistTrackIds(playlist).includes(id));
     const item = document.createElement('button');
     item.className = 'menu-item';
     const check = document.createElement('span');
     check.className = 'check';
-    check.textContent = playlist.trackIds.includes(trackId) ? '\u2713' : '';
+    check.textContent = included ? '\u2713' : '';
     const name = document.createElement('span');
     name.className = 'menu-name';
     name.textContent = playlist.name;
     item.append(check, name);
     item.addEventListener('click', () => {
-      togglePlaylistMembership(playlist.name, trackId);
+      for (const id of ids) setPlaylistMembership(playlist.name, id, !included);
       closeRowMenu();
     });
     menu.appendChild(item);
@@ -906,7 +1195,7 @@ function openRowMenu(trackId, anchor) {
   newItem.textContent = '+ New playlist\u2026';
   newItem.addEventListener('click', () => {
     closeRowMenu();
-    startNewPlaylist(trackId);
+    startNewPlaylist(ids);
   });
   menu.appendChild(newItem);
 
@@ -922,8 +1211,8 @@ function openRowMenu(trackId, anchor) {
   menu.style.top = `${top}px`;
 }
 
-function startNewPlaylist(trackId) {
-  pendingPlaylistTrackId = trackId || null;
+function startNewPlaylist(ids) {
+  pendingPlaylistIds = (Array.isArray(ids) ? ids : ids ? [ids] : []).filter(Boolean);
   els.newPlaylistRow.classList.remove('hidden');
   els.newPlaylistInput.value = '';
   els.newPlaylistInput.focus();
@@ -933,16 +1222,39 @@ function finishNewPlaylist() {
   const name = els.newPlaylistInput.value.trim();
   els.newPlaylistRow.classList.add('hidden');
   els.newPlaylistInput.value = '';
-  const trackId = pendingPlaylistTrackId;
-  pendingPlaylistTrackId = null;
+  const ids = pendingPlaylistIds;
+  pendingPlaylistIds = [];
   if (!name) return;
   let playlist = state.playlists.find((pl) => pl.name === name);
   if (!playlist) {
     playlist = { name, trackIds: [] };
     state.playlists.push(playlist);
   }
-  if (trackId && !playlist.trackIds.includes(trackId)) {
-    playlist.trackIds.push(trackId);
+  for (const id of ids) {
+    if (!playlist.trackIds.includes(id)) playlist.trackIds.push(id);
+  }
+  persist();
+  renderSidebar();
+  if (state.view.type === 'playlist' && state.view.name === name) {
+    renderTrackList();
+  }
+}
+
+function setPlaylistMembership(name, id, include) {
+  const playlist = state.playlists.find((pl) => pl.name === name);
+  if (!playlist) return;
+  if (playlist.live) {
+    // Live playlists are derived from their sources; hand-added tracks ride
+    // along as extras so they survive the next recompute.
+    if (!Array.isArray(playlist.extraIds)) playlist.extraIds = [];
+    const index = playlist.extraIds.indexOf(id);
+    if (include && index === -1) playlist.extraIds.push(id);
+    if (!include && index !== -1) playlist.extraIds.splice(index, 1);
+    playlist.trackIds = computeLiveTrackIds(playlist);
+  } else {
+    const index = playlist.trackIds.indexOf(id);
+    if (include && index === -1) playlist.trackIds.push(id);
+    if (!include && index !== -1) playlist.trackIds.splice(index, 1);
   }
   persist();
   renderSidebar();
@@ -954,13 +1266,394 @@ function finishNewPlaylist() {
 function togglePlaylistMembership(name, trackId) {
   const playlist = state.playlists.find((pl) => pl.name === name);
   if (!playlist) return;
-  const index = playlist.trackIds.indexOf(trackId);
-  if (index === -1) playlist.trackIds.push(trackId);
-  else playlist.trackIds.splice(index, 1);
-  persist();
-  if (state.view.type === 'playlist' && state.view.name === name) {
-    renderTrackList();
+  setPlaylistMembership(name, trackId, !playlistTrackIds(playlist).includes(trackId));
+}
+
+function sourceTrackIds(source) {
+  const type = source && source.type;
+  const key = source && source.key;
+  if (type === 'genre') {
+    const lower = String(key).toLowerCase();
+    return state.tracks
+      .filter((track) => (track.genre || []).some((g) => g.toLowerCase() === lower))
+      .map((track) => track.id);
   }
+  if (type === 'album') {
+    const group = albumGroups().find((g) => g.key === key);
+    return group ? group.ids : [];
+  }
+  if (type === 'artist') {
+    return state.tracks.filter((track) => track.artist === key).map((track) => track.id);
+  }
+  if (type === 'era') {
+    return state.tracks.filter((track) => eraKey(track) === key).map((track) => track.id);
+  }
+  if (type === 'year') {
+    return state.tracks.filter((track) => String(track.year) === String(key)).map((track) => track.id);
+  }
+  return [];
+}
+
+// Sources are unioned in the order the user arranged them, then hand-picked
+// tracks; duplicates are dropped so the same song never appears twice.
+function computeLiveTrackIds(playlist) {
+  const ids = [];
+  const seen = new Set();
+  const push = (id) => {
+    if (seen.has(id) || !trackById(id)) return;
+    seen.add(id);
+    ids.push(id);
+  };
+  for (const source of playlist.sources || []) {
+    for (const id of sourceTrackIds(source)) push(id);
+  }
+  for (const id of playlist.extraIds || []) push(id);
+  return ids;
+}
+
+function playlistTrackIds(playlist) {
+  if (playlist && playlist.live) return computeLiveTrackIds(playlist);
+  return playlist && Array.isArray(playlist.trackIds) ? playlist.trackIds : [];
+}
+
+function recomputeLivePlaylists() {
+  for (const playlist of state.playlists) {
+    if (playlist && playlist.live) playlist.trackIds = computeLiveTrackIds(playlist);
+  }
+}
+
+const BUILDER_TABS = [
+  { key: 'genre', label: 'Genres' },
+  { key: 'album', label: 'Albums' },
+  { key: 'artist', label: 'Artists' },
+  { key: 'era', label: 'Eras' },
+  { key: 'year', label: 'Years' }
+];
+
+let builder = null;
+
+function builderSourceItems(cat) {
+  if (cat === 'album') {
+    return albumGroups().map((g) => ({ type: 'album', key: g.key, label: g.album, sub: g.artist, count: g.ids.length }));
+  }
+  if (cat === 'artist') {
+    return artistGroups().map((g) => ({ type: 'artist', key: g.key, label: g.name, count: g.ids.length }));
+  }
+  if (cat === 'era') {
+    return eraGroups().map((g) => ({ type: 'era', key: g.key, label: g.label, count: g.ids.length }));
+  }
+  if (cat === 'year') {
+    const years = new Map();
+    for (const track of state.tracks) {
+      if (!Number.isFinite(track.year)) continue;
+      const key = String(track.year);
+      years.set(key, (years.get(key) || 0) + 1);
+    }
+    return [...years.entries()]
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([key, count]) => ({ type: 'year', key, label: key, count }));
+  }
+  return genreGroups().map((g) => ({ type: 'genre', key: g.key, label: g.name, count: g.ids.length }));
+}
+
+function tabLabel(type) {
+  const tab = BUILDER_TABS.find((t) => t.key === type);
+  return tab ? tab.label.replace(/s$/, '') : type;
+}
+
+function builderHasSource(source) {
+  return builder.sources.some((s) => s.type === source.type && s.key === source.key);
+}
+
+function openBuilder(playlist) {
+  builder = {
+    editing: playlist ? playlist.name : null,
+    name: playlist ? playlist.name : '',
+    live: playlist ? playlist.live !== false : true,
+    sources: playlist ? (playlist.sources || []).map((s) => ({ ...s })) : [],
+    extraIds: playlist ? [...(playlist.extraIds || [])] : [],
+    tab: 'genre',
+    query: '',
+    trackQuery: '',
+    error: ''
+  };
+  els.builderTitle.textContent = playlist ? 'Edit playlist' : 'Playlist builder';
+  els.builderOverlay.classList.remove('hidden');
+  renderBuilder();
+}
+
+function closeBuilder() {
+  builder = null;
+  els.builderOverlay.classList.add('hidden');
+}
+
+function builderSectionTitle(text) {
+  const title = document.createElement('h3');
+  title.className = 'b-section';
+  title.textContent = text;
+  return title;
+}
+
+function renderBuilder() {
+  if (!builder) return;
+  const body = els.builderBody;
+  body.replaceChildren();
+
+  const head = document.createElement('div');
+  head.className = 'b-head';
+  const nameInput = document.createElement('input');
+  nameInput.className = 'b-name';
+  nameInput.type = 'text';
+  nameInput.placeholder = 'Playlist name';
+  nameInput.maxLength = 60;
+  nameInput.value = builder.name;
+  nameInput.addEventListener('input', () => { builder.name = nameInput.value; });
+  const liveLabel = document.createElement('label');
+  liveLabel.className = 'b-live';
+  const liveBox = document.createElement('input');
+  liveBox.type = 'checkbox';
+  liveBox.checked = builder.live;
+  liveBox.addEventListener('change', () => { builder.live = liveBox.checked; });
+  const liveText = document.createElement('span');
+  liveText.textContent = 'Live \u2014 update as my library changes';
+  liveLabel.append(liveBox, liveText);
+  head.append(nameInput, liveLabel);
+  body.appendChild(head);
+
+  if (builder.error) {
+    const err = document.createElement('div');
+    err.className = 'b-error';
+    err.textContent = builder.error;
+    body.appendChild(err);
+  }
+
+  body.appendChild(builderSectionTitle('Sources'));
+  const chips = document.createElement('div');
+  chips.className = 'b-chips';
+  if (!builder.sources.length) {
+    const hint = document.createElement('div');
+    hint.className = 'b-hint';
+    hint.textContent = 'Pick genres, albums, artists, eras or years below. Drag to reorder.';
+    chips.appendChild(hint);
+  }
+  builder.sources.forEach((source, index) => {
+    const chip = document.createElement('span');
+    chip.className = 'b-chip';
+    chip.draggable = true;
+    const label = document.createElement('span');
+    label.textContent = `${tabLabel(source.type)}: ${source.label}`;
+    const remove = document.createElement('button');
+    remove.className = 'b-chip-x';
+    remove.textContent = '\u2715';
+    remove.addEventListener('click', () => {
+      builder.sources.splice(index, 1);
+      renderBuilder();
+    });
+    chip.append(label, remove);
+    chip.addEventListener('dragstart', (event) => {
+      event.dataTransfer.setData('text/plain', String(index));
+      event.dataTransfer.effectAllowed = 'move';
+    });
+    chip.addEventListener('dragover', (event) => event.preventDefault());
+    chip.addEventListener('drop', (event) => {
+      event.preventDefault();
+      const from = parseInt(event.dataTransfer.getData('text/plain'), 10);
+      if (!Number.isFinite(from) || from === index) return;
+      const [moved] = builder.sources.splice(from, 1);
+      builder.sources.splice(index, 0, moved);
+      renderBuilder();
+    });
+    chips.appendChild(chip);
+  });
+  body.appendChild(chips);
+
+  const tabs = document.createElement('div');
+  tabs.className = 'b-tabs';
+  for (const tab of BUILDER_TABS) {
+    const btn = document.createElement('button');
+    btn.className = 'b-tab' + (builder.tab === tab.key ? ' active' : '');
+    btn.textContent = tab.label;
+    btn.addEventListener('click', () => {
+      builder.tab = tab.key;
+      builder.query = '';
+      renderBuilder();
+    });
+    tabs.appendChild(btn);
+  }
+  body.appendChild(tabs);
+
+  const search = document.createElement('input');
+  search.className = 'b-search';
+  search.type = 'search';
+  search.placeholder = `Filter ${tabLabel(builder.tab).toLowerCase()}s\u2026`;
+  search.value = builder.query;
+  search.addEventListener('input', () => {
+    builder.query = search.value;
+    renderBuilderList();
+  });
+  body.appendChild(search);
+
+  const list = document.createElement('div');
+  list.className = 'b-list';
+  list.id = 'builder-list';
+  body.appendChild(list);
+
+  body.appendChild(builderSectionTitle('Tracks added by hand'));
+  const trackSearch = document.createElement('input');
+  trackSearch.className = 'b-search';
+  trackSearch.type = 'search';
+  trackSearch.placeholder = 'Search tracks to add\u2026';
+  trackSearch.value = builder.trackQuery;
+  trackSearch.addEventListener('input', () => {
+    builder.trackQuery = trackSearch.value;
+    renderBuilderExtras();
+  });
+  body.appendChild(trackSearch);
+
+  const extras = document.createElement('div');
+  extras.className = 'b-list';
+  extras.id = 'builder-extras';
+  body.appendChild(extras);
+
+  const count = computeLiveTrackIds(builder).length;
+  const preview = document.createElement('div');
+  preview.className = 'b-preview';
+  preview.textContent = `${count} track${count === 1 ? '' : 's'} in this playlist`;
+  body.appendChild(preview);
+
+  renderBuilderList();
+  renderBuilderExtras();
+}
+
+function builderToggleSource(item, on) {
+  if (on) {
+    if (!builderHasSource(item)) {
+      builder.sources.push({ type: item.type, key: item.key, label: item.label });
+    }
+  } else {
+    builder.sources = builder.sources.filter((s) => !(s.type === item.type && s.key === item.key));
+  }
+  renderBuilder();
+}
+
+function renderBuilderList() {
+  const wrap = els.builderBody.querySelector('#builder-list');
+  if (!wrap || !builder) return;
+  wrap.replaceChildren();
+  const query = builder.query.trim().toLowerCase();
+  let items = builderSourceItems(builder.tab);
+  if (query) items = items.filter((item) => `${item.label} ${item.sub || ''}`.toLowerCase().includes(query));
+  if (!items.length) {
+    const hint = document.createElement('div');
+    hint.className = 'b-hint';
+    hint.textContent = 'Nothing to show here.';
+    wrap.appendChild(hint);
+    return;
+  }
+  for (const item of items) {
+    const row = document.createElement('label');
+    row.className = 'b-row';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = builderHasSource(item);
+    box.addEventListener('change', () => builderToggleSource(item, box.checked));
+    const name = document.createElement('span');
+    name.className = 'b-row-name';
+    name.textContent = item.sub ? `${item.label} \u2014 ${item.sub}` : item.label;
+    const count = document.createElement('span');
+    count.className = 'b-row-count';
+    count.textContent = String(item.count);
+    row.append(box, name, count);
+    wrap.appendChild(row);
+  }
+}
+
+function renderBuilderExtras() {
+  const wrap = els.builderBody.querySelector('#builder-extras');
+  if (!wrap || !builder) return;
+  wrap.replaceChildren();
+  const query = builder.trackQuery.trim().toLowerCase();
+  const chosen = new Set(builder.extraIds);
+  if (!query) {
+    if (!builder.extraIds.length) {
+      const hint = document.createElement('div');
+      hint.className = 'b-hint';
+      hint.textContent = 'Search above to add individual tracks.';
+      wrap.appendChild(hint);
+      return;
+    }
+    for (const id of builder.extraIds) {
+      const track = trackById(id);
+      if (track) wrap.appendChild(builderExtraRow(track, true));
+    }
+    return;
+  }
+  const matches = state.tracks
+    .filter((track) => `${track.title} ${track.artist} ${track.album}`.toLowerCase().includes(query))
+    .slice(0, 50);
+  if (!matches.length) {
+    const hint = document.createElement('div');
+    hint.className = 'b-hint';
+    hint.textContent = 'No matches.';
+    wrap.appendChild(hint);
+    return;
+  }
+  for (const track of matches) wrap.appendChild(builderExtraRow(track, chosen.has(track.id)));
+}
+
+function builderExtraRow(track, added) {
+  const row = document.createElement('label');
+  row.className = 'b-row';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  box.checked = added;
+  box.addEventListener('change', () => {
+    if (box.checked) {
+      if (!builder.extraIds.includes(track.id)) builder.extraIds.push(track.id);
+    } else {
+      builder.extraIds = builder.extraIds.filter((id) => id !== track.id);
+    }
+    renderBuilder();
+  });
+  const name = document.createElement('span');
+  name.className = 'b-row-name';
+  name.textContent = `${track.title} \u2014 ${track.artist}`;
+  row.append(box, name);
+  return row;
+}
+
+function saveBuilder() {
+  if (!builder) return;
+  const name = builder.name.trim();
+  if (!name) {
+    builder.error = 'Give the playlist a name.';
+    renderBuilder();
+    return;
+  }
+  if (state.playlists.some((pl) => pl.name === name && pl.name !== builder.editing)) {
+    builder.error = 'A playlist with that name already exists.';
+    renderBuilder();
+    return;
+  }
+  let playlist = state.playlists.find((pl) => pl.name === builder.editing);
+  if (!playlist) {
+    playlist = { name, trackIds: [] };
+    state.playlists.push(playlist);
+  }
+  playlist.name = name;
+  playlist.live = builder.live;
+  playlist.sources = builder.sources.map((source) => ({ ...source }));
+  playlist.extraIds = [...builder.extraIds];
+  playlist.trackIds = computeLiveTrackIds(playlist);
+  delete playlist.auto;
+  if (state.view.type === 'playlist' && state.view.name === builder.editing) {
+    state.view = { type: 'playlist', name };
+  }
+  resolvePlaylistView();
+  persist();
+  renderSidebar();
+  renderMain();
+  closeBuilder();
 }
 
 function deletePlaylist(name) {
@@ -1165,6 +1858,7 @@ async function handleCategorize() {
         applied++;
       }
     }
+    recomputeLivePlaylists();
     renderMain();
     if (cancelled) {
       els.status.textContent = `Categorization cancelled \u2014 ${applied} track${applied === 1 ? '' : 's'} updated.`;
@@ -1186,7 +1880,10 @@ const THEME_SWATCH = {
   red: ['#000000', '#830000', '#bc0202', '#ff0000'],
   teal: ['#212121', '#323232', '#0d7377', '#14ffec'],
   ocean: ['#0a2647', '#144272', '#205295', '#4a9ee8'],
-  sage: ['#040d12', '#183d3d', '#5c8374', '#93b1a6']
+  sage: ['#040d12', '#183d3d', '#5c8374', '#93b1a6'],
+  forest: ['#2c3639', '#3f4e4f', '#a27b5c', '#dcd7c9'],
+  regal: ['#000000', '#8e1616', '#e8c999', '#f8eedf'],
+  terracotta: ['#524646', '#a8a492', '#ec5b38', '#fcf2e5']
 };
 
 function applyTheme() {
@@ -1261,6 +1958,10 @@ function settingsSections() {
     {
       title: 'Library',
       rows: [
+        { type: 'sources' },
+        { type: 'dedupe' },
+        { type: 'duplicates' },
+        { type: 'hidden' },
         { type: 'toggle', key: 'browseSections', label: 'Browse sections', hint: 'Albums, Artists, Genres, Eras' },
         { type: 'toggle', key: 'genreTools', label: 'Genre tools', hint: 'Genre playlists and online categorizer' },
         { type: 'toggle', key: 'favorites', label: 'Favorites' },
@@ -1356,6 +2057,205 @@ function buildSegmentRow(row) {
   return wrap;
 }
 
+function buildSourcesRow() {
+  const wrap = document.createElement('div');
+  wrap.className = 'sources-row';
+  const title = document.createElement('div');
+  title.className = 'sources-title';
+  title.textContent = `Music sources (${state.sources.length})`;
+  wrap.appendChild(title);
+  if (!state.sources.length) {
+    const empty = document.createElement('div');
+    empty.className = 'set-hint';
+    empty.textContent = 'No sources yet. Add a folder or some files.';
+    wrap.appendChild(empty);
+  }
+  for (const source of state.sources) {
+    const row = document.createElement('div');
+    row.className = 'source-item';
+    const icon = document.createElement('span');
+    icon.className = 'source-icon';
+    icon.textContent = source.type === 'file' ? '\u266B' : '\u25A0';
+    const path = document.createElement('span');
+    path.className = 'source-path';
+    path.textContent = source.path;
+    path.title = source.path;
+    const remove = document.createElement('button');
+    remove.className = 'ghost-btn source-remove';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => removeSource(source.path));
+    row.append(icon, path, remove);
+    wrap.appendChild(row);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'sources-actions';
+  const addFolder = document.createElement('button');
+  addFolder.className = 'accent-btn';
+  addFolder.textContent = 'Add folder';
+  addFolder.addEventListener('click', () => addSource('folder'));
+  const addFiles = document.createElement('button');
+  addFiles.className = 'ghost-btn';
+  addFiles.textContent = 'Add files';
+  addFiles.addEventListener('click', () => addSource('file'));
+  actions.append(addFolder, addFiles);
+  wrap.appendChild(actions);
+  return wrap;
+}
+
+// Dedupe is stored in config.json (main scans with it), so it can't ride the
+// normal settings toggle row; the checkbox reflects state.dedupe instead.
+function buildDedupeRow() {
+  const label = document.createElement('label');
+  label.className = 'set-row';
+  const text = document.createElement('span');
+  text.className = 'set-label';
+  text.textContent = 'Ignore duplicate songs';
+  const hint = document.createElement('span');
+  hint.className = 'set-hint';
+  hint.textContent = 'Keeps the best-quality copy of the same title and artist';
+  text.appendChild(hint);
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.className = 'switch';
+  input.checked = state.dedupe;
+  input.addEventListener('change', () => setDedupe(input.checked));
+  label.append(text, input);
+  return label;
+}
+
+function buildHiddenRow() {
+  const wrap = document.createElement('div');
+  wrap.className = 'sources-row';
+  const title = document.createElement('div');
+  title.className = 'sources-title';
+  title.textContent = `Hidden songs (${state.hidden.length})`;
+  wrap.appendChild(title);
+  if (!state.hidden.length) {
+    const empty = document.createElement('div');
+    empty.className = 'set-hint';
+    empty.textContent = 'No songs removed. Use the \u2298 button on a track to take it out of the library.';
+    wrap.appendChild(empty);
+    return wrap;
+  }
+  for (const entry of state.hidden) {
+    const row = document.createElement('div');
+    row.className = 'source-item';
+    const icon = document.createElement('span');
+    icon.className = 'source-icon';
+    icon.textContent = '\u2298';
+    const label = document.createElement('span');
+    label.className = 'source-path';
+    label.textContent = [entry.artist, entry.title].filter(Boolean).join(' \u2014 ') || entry.path;
+    label.title = entry.path;
+    const restore = document.createElement('button');
+    restore.className = 'ghost-btn source-remove';
+    restore.textContent = 'Restore';
+    restore.addEventListener('click', () => restoreTracks([entry.path]));
+    row.append(icon, label, restore);
+    wrap.appendChild(row);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'sources-actions';
+  const all = document.createElement('button');
+  all.className = 'ghost-btn';
+  all.textContent = 'Restore all';
+  all.addEventListener('click', restoreAllHidden);
+  actions.appendChild(all);
+  wrap.appendChild(actions);
+  return wrap;
+}
+
+// Duplicates are only ignored automatically; "Restore" pins a copy so it stays
+// even though it looks like another track, and "Ignore again" unpins it.
+function buildDuplicatesRow() {
+  const wrap = document.createElement('div');
+  wrap.className = 'sources-row';
+
+  const title = document.createElement('div');
+  title.className = 'sources-title';
+  title.textContent = `Ignored duplicates (${state.ignored.length})`;
+  wrap.appendChild(title);
+
+  if (!state.ignored.length && !state.dupesKept.length) {
+    const empty = document.createElement('div');
+    empty.className = 'set-hint';
+    empty.textContent = 'No duplicates ignored. Songs are matched on the same title and artist.';
+    wrap.appendChild(empty);
+    return wrap;
+  }
+
+  if (!state.ignored.length) {
+    const empty = document.createElement('div');
+    empty.className = 'set-hint';
+    empty.textContent = 'Nothing ignored right now.';
+    wrap.appendChild(empty);
+  }
+
+  for (const entry of state.ignored) {
+    const row = document.createElement('div');
+    row.className = 'source-item';
+    const icon = document.createElement('span');
+    icon.className = 'source-icon';
+    icon.textContent = '\u29C9';
+    const text = document.createElement('div');
+    text.className = 'dup-text';
+    const primary = document.createElement('span');
+    primary.className = 'dup-name';
+    primary.textContent = [entry.artist, entry.title].filter(Boolean).join(' \u2014 ');
+    const kept = document.createElement('span');
+    kept.className = 'dup-kept';
+    kept.textContent = entry.keptTitle
+      ? `Ignored in favour of ${[entry.keptArtist, entry.keptTitle].filter(Boolean).join(' \u2014 ')}`
+      : 'Ignored as a duplicate';
+    text.append(primary, kept);
+    const restore = document.createElement('button');
+    restore.className = 'ghost-btn source-remove';
+    restore.textContent = 'Restore';
+    restore.addEventListener('click', () => restoreDuplicates([entry.id]));
+    row.append(icon, text, restore);
+    wrap.appendChild(row);
+  }
+
+  if (state.ignored.length) {
+    const actions = document.createElement('div');
+    actions.className = 'sources-actions';
+    const all = document.createElement('button');
+    all.className = 'ghost-btn';
+    all.textContent = 'Restore all';
+    all.addEventListener('click', restoreAllDuplicates);
+    actions.appendChild(all);
+    wrap.appendChild(actions);
+  }
+
+  if (state.dupesKept.length) {
+    const keptTitle = document.createElement('div');
+    keptTitle.className = 'sources-title dup-kept-title';
+    keptTitle.textContent = `Restored duplicates (${state.dupesKept.length})`;
+    wrap.appendChild(keptTitle);
+    for (const entry of state.dupesKept) {
+      const row = document.createElement('div');
+      row.className = 'source-item';
+      const icon = document.createElement('span');
+      icon.className = 'source-icon';
+      icon.textContent = '\u2714';
+      const text = document.createElement('div');
+      text.className = 'dup-text';
+      const primary = document.createElement('span');
+      primary.className = 'dup-name';
+      primary.textContent = [entry.artist, entry.title].filter(Boolean).join(' \u2014 ');
+      text.appendChild(primary);
+      const ignore = document.createElement('button');
+      ignore.className = 'ghost-btn source-remove';
+      ignore.textContent = 'Ignore again';
+      ignore.addEventListener('click', () => ignoreDuplicates([entry.id]));
+      row.append(icon, text, ignore);
+      wrap.appendChild(row);
+    }
+  }
+
+  return wrap;
+}
+
 function renderSettings() {
   els.settingsBody.replaceChildren();
   for (const section of settingsSections()) {
@@ -1369,6 +2269,10 @@ function renderSettings() {
       if (row.type === 'theme') sec.appendChild(buildThemeRow());
       else if (row.type === 'toggle') sec.appendChild(buildToggleRow(row));
       else if (row.type === 'segment') sec.appendChild(buildSegmentRow(row));
+      else if (row.type === 'sources') sec.appendChild(buildSourcesRow());
+      else if (row.type === 'dedupe') sec.appendChild(buildDedupeRow());
+      else if (row.type === 'duplicates') sec.appendChild(buildDuplicatesRow());
+      else if (row.type === 'hidden') sec.appendChild(buildHiddenRow());
     }
     els.settingsBody.appendChild(sec);
   }
@@ -1388,7 +2292,7 @@ function wireEvents() {
     item.addEventListener('click', () => setView({ type: item.dataset.view }));
   });
 
-  els.chooseFolder.addEventListener('click', chooseFolder);
+  els.chooseFolder.addEventListener('click', () => openAddMenu(els.chooseFolder));
 
   els.search.addEventListener('input', () => {
     state.search = els.search.value;
@@ -1398,22 +2302,44 @@ function wireEvents() {
   els.trackList.addEventListener('click', (event) => {
     const row = event.target.closest('.track-row');
     if (!row) return;
+    const id = row.dataset.id;
     if (event.target.closest('.fav-btn')) {
-      toggleFavorite(row.dataset.id);
+      toggleFavorite(id);
       return;
     }
     if (event.target.closest('.add-btn')) {
-      openRowMenu(row.dataset.id, event.target.closest('.add-btn'));
+      openPlaylistMenu([id], event.target.closest('.add-btn'));
       return;
     }
-    playTrack(row.dataset.id);
+    if (event.target.closest('.hide-btn')) {
+      hideTracks([id]);
+      return;
+    }
+    // Ctrl/Cmd and Shift clicks build a multi-track selection; a plain click
+    // still starts playback so the single-click-to-play behaviour is intact.
+    if (event.shiftKey && state.selAnchor) {
+      selectRange(state.selAnchor, id, event.ctrlKey || event.metaKey);
+      return;
+    }
+    if (event.ctrlKey || event.metaKey) {
+      toggleSelection(id);
+      return;
+    }
+    clearSelection();
+    playTrack(id);
   });
 
   document.addEventListener('click', (event) => {
     if (!els.rowMenu.classList.contains('hidden') &&
       !event.target.closest('#row-menu') &&
-      !event.target.closest('.add-btn')) {
+      !event.target.closest('.add-btn') &&
+      !els.selBar.contains(event.target)) {
       closeRowMenu();
+    }
+    if (!els.addMenu.classList.contains('hidden') &&
+      !event.target.closest('#add-menu') &&
+      !event.target.closest('#choose-folder')) {
+      closeAddMenu();
     }
     if (!els.qualityPopover.classList.contains('hidden') &&
       !event.target.closest('#quality-popover') &&
@@ -1433,11 +2359,21 @@ function wireEvents() {
   });
 
   els.newPlaylist.addEventListener('click', () => startNewPlaylist(null));
+  els.playlistBuilder.addEventListener('click', () => openBuilder(null));
   els.genreMaker.addEventListener('click', () => {
     if (els.genrePopover.classList.contains('hidden')) openGenreMaker();
     else closeGenrePopover();
   });
   els.categorizeBtn.addEventListener('click', handleCategorize);
+
+  els.queueBtn.addEventListener('click', () => toggleQueue());
+  els.queueClose.addEventListener('click', () => toggleQueue(false));
+
+  els.builderClose.addEventListener('click', closeBuilder);
+  els.builderSave.addEventListener('click', saveBuilder);
+  els.builderOverlay.addEventListener('click', (event) => {
+    if (event.target === els.builderOverlay) closeBuilder();
+  });
 
   els.settingsBtn.addEventListener('click', openSettings);
   els.settingsClose.addEventListener('click', closeSettings);
@@ -1465,7 +2401,7 @@ function wireEvents() {
   els.newPlaylistInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') finishNewPlaylist();
     if (event.key === 'Escape') {
-      pendingPlaylistTrackId = null;
+      pendingPlaylistIds = [];
       els.newPlaylistRow.classList.add('hidden');
     }
   });
@@ -1548,6 +2484,10 @@ function wireEvents() {
   });
 
   document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !els.builderOverlay.classList.contains('hidden')) {
+      closeBuilder();
+      return;
+    }
     if (event.key === 'Escape' && !els.settingsOverlay.classList.contains('hidden')) {
       closeSettings();
       return;
@@ -1586,8 +2526,14 @@ async function loadLibrary() {
     renderMain();
     return;
   }
-  state.folder = result.folder;
-  state.tracks = result.tracks;
+  state.sources = result.sources || [];
+  state.tracks = result.tracks || [];
+  state.dedupe = result.dedupe !== false;
+  state.hidden = Array.isArray(result.hidden) ? result.hidden : [];
+  state.duplicates = Number(result.duplicates) || 0;
+  state.ignored = Array.isArray(result.ignored) ? result.ignored : [];
+  state.dupesKept = Array.isArray(result.dupesKept) ? result.dupesKept : [];
+  recomputeLivePlaylists();
   if (state.lastTrackId && trackById(state.lastTrackId)) {
     state.currentId = state.lastTrackId;
   }
@@ -1603,6 +2549,7 @@ async function loadLibrary() {
   }
   updateStatus();
   updatePlayerBar();
+  renderSidebar();
   renderMain();
 }
 

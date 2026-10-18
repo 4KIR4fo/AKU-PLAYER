@@ -3,8 +3,16 @@ const { contextBridge, ipcRenderer } = require('electron');
 // The renderer runs sandboxed with no Node access; this is the only surface it
 // gets. Keep it to plain data and callbacks so nothing leaks over the bridge.
 contextBridge.exposeInMainWorld('aku', {
-  chooseFolder: () => ipcRenderer.invoke('choose-folder'),
+  addFolder: () => ipcRenderer.invoke('add-folder'),
+  addFiles: () => ipcRenderer.invoke('add-files'),
+  removeSource: (sourcePath) => ipcRenderer.invoke('remove-source', sourcePath),
   getLibrary: () => ipcRenderer.invoke('get-library'),
+  setDedupe: (on) => ipcRenderer.invoke('set-dedupe', on),
+  hideTracks: (ids) => ipcRenderer.invoke('hide-tracks', ids),
+  restoreTracks: (paths) => ipcRenderer.invoke('restore-tracks', paths),
+  restoreAllHidden: () => ipcRenderer.invoke('restore-all-hidden'),
+  restoreDuplicates: (ids) => ipcRenderer.invoke('restore-duplicates', ids),
+  ignoreDuplicates: (ids) => ipcRenderer.invoke('ignore-duplicates', ids),
   onScanProgress: (callback) => {
     ipcRenderer.on('scan-progress', (_event, progress) => callback(progress));
   },
