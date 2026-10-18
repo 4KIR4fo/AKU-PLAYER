@@ -4,6 +4,21 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-18
+
+### Added
+
+- Windows installer (`AKU-Setup-<version>.exe`): pick the install folder, choose
+  whether to create a desktop shortcut, per-user or all-users install, and a
+  proper uninstaller in Add/Remove Programs
+
+### Changed
+
+- The portable download is now named `AKU-Portable-<version>.exe` so it is not
+  confused with the installer
+
+[0.3.0]: https://github.com/4KIR4fo/AKU-PLAYER/releases/tag/v0.3.0
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

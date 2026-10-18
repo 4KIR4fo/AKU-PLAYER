@@ -11,7 +11,8 @@
   Where to put the checkout. Defaults to %LOCALAPPDATA%\AKU-PLAYER.
 
 .PARAMETER Build
-  Also build the portable dist\AKU.exe and point the shortcuts at it.
+  Also build the installer and portable exe via electron-builder and point the
+  shortcuts at the unpacked build.
 
 .PARAMETER Uninstall
   Remove the shortcuts and the installed copy.
@@ -85,11 +86,11 @@ finally {
 }
 
 if ($Build) {
-  Write-Step 'Building portable executable'
+  Write-Step 'Building installer and portable exe'
   Push-Location $InstallDir
   try { npm run dist }
   finally { Pop-Location }
-  $target = Join-Path $InstallDir 'dist\AKU.exe'
+  $target = Join-Path $InstallDir 'dist\win-unpacked\AKU.exe'
 }
 else {
   $target = Join-Path $InstallDir 'node_modules\electron\dist\electron.exe'

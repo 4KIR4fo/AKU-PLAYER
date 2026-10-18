@@ -20,15 +20,18 @@ cmd.exe /c "C:\PROGRA~1\nodejs\node.exe node_modules\electron\cli.js ."
 
 - Launching (dev): do NOT use `npm.cmd start` from WSL — the `.bin\electron.cmd` shim needs `node` on PATH. Either use the `cli.js` invocation above, or prefix with the PATH set. In a native Windows terminal (fresh session), `npm start` works normally.
 - Dev workflow: `main.js` / `preload.js` / `mini-preload.js` changes need a full app restart (main-process/preload code doesn't hot-apply); renderer-only changes (`index.html`, `style.css`, `renderer.js`, `mini.html`, `mini.css`, `mini.js`) apply with Ctrl+R (default Electron menu is kept)
-- Packaging: `cmd.exe /c "set PATH=C:\PROGRA~1\nodejs;%PATH%&&C:\PROGRA~1\nodejs\node.exe node_modules\electron-builder\out\cli\cli.js --win portable"` (equivalent to `npm run dist` / `npm run build`; same PATH caveat) → `dist\AKU.exe`
-- Electron 44 has **no postinstall download**, so `package.json` declares `"postinstall": "node node_modules/electron/install.js"` and a fresh `npm install` now fetches the binary automatically. With `--ignore-scripts`, run it by hand: `cmd.exe /c "C:\PROGRA~1\nodejs\node.exe node_modules\electron\install.js"`
-- npm 11 `allowScripts` blocks `electron-winstaller`'s postinstall by default; harmless for the portable (NSIS) target
+- Packaging: `cmd.exe /c "set PATH=C:\PROGRA~1\nodejs;%PATH%&&C:\PROGRA~1\nodejs\node.exe node_modules\electron-builder\out\cli\cli.js --win"` (equivalent to `npm run dist` / `npm run build`; same PATH caveat) → `dist\AKU-Setup-<version>.exe` + `dist\AKU-Portable-<version>.exe`
+- Electron 44 has **no postinstall download**, so `package.json` declares `"postinstall": "node node_modules/electron/install.js"` and a fresh `npm install` now fetches the binary automatically. With `--ignore-scripts`, run it by hand: `cmd.exe /c "C:\PROGRA~1\nodejs\node.exe node_modules/electron/install.js"`
+- npm 11 `allowScripts` blocks `electron-winstaller`'s postinstall by default; harmless for the targets used here (nsis/portable)
 - Never run npm inside WSL for this project — it would resolve the Linux Electron, which cannot run as the intended Windows app
 
 ## Packaging
-- electron-builder 26, target `portable` (NSIS wrapper), config in `package.json` → `build`
-- Output: `dist\AKU.exe` (self-contained portable, ~96–100 MB; extracts to temp at launch, slower start); settings still live in `%APPDATA%\aku-player`. Name comes from `build.artifactName` (`AKU.${ext}`) + `build.win.executableName` (`AKU`); `productName`/`name`/`appId` stay `aku-player` so the data path doesn't move. Its file timestamp/size is how to confirm a fresh build.
-- `dist\win-unpacked\AKU.exe` is the same build without the portable wrapper — no temp extraction at launch, handy for quickly testing a packaged build
+- electron-builder 26, targets `nsis` + `portable`, config in `package.json` → `build`
+- `nsis` = the Windows installer (`AKU-Setup-<version>.exe`): assisted (`oneClick: false`), per-user by default, lets the user pick the install folder (`allowToChangeInstallationDirectory`) and whether to create a desktop shortcut (see below). Installs to `%LOCALAPPDATA%\Programs\AKU` with Start Menu / Desktop shortcuts and an Add/Remove Programs entry
+- `portable` = `AKU-Portable-<version>.exe`, a self-contained exe (~96–100 MB) that extracts to a temp folder at launch (slower start)
+- Both keep settings in `%APPDATA%\aku-player`. Artifact names come from `build.nsis.artifactName` / `build.portable.artifactName`; `build.win.executableName` is `AKU`; `productName`/`name`/`appId` stay `aku-player` so the data path doesn't move. File timestamp/size of the artifact is how to confirm a fresh build
+- `build\installer.nsh` is a build-time NSIS include for the `nsis` target (auto-discovered, **not** in `build.files` and **not** packaged). It adds a "Create a desktop shortcut" checkbox via the `customPageAfterChangeDir` hook; because electron-builder's `createDesktopShortcut` is all-or-nothing, the page's choice is enforced in `customInstall`, which deletes the shortcut (`$newDesktopLink`) when the box is cleared (silent/update runs are skipped)
+- `dist\win-unpacked\AKU.exe` is the unpacked build (no wrapper) — handy for quickly testing a packaged build
 - `build.files` is a **whitelist**: any new runtime file (html/js/css preload) must be added there or it won't be in the packaged exe. Only `build/icon.png` is pulled from a subdir
 - Icon: `build\icon.png` (512×512, transparent background) is used for the exe and the dev window (`BrowserWindow.icon`)
 - Regenerate icon: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\make-icon.ps1` — decodes `build\icon-source.webp` via WIC, center-crops, scales to 512, flood-fills border-connected white to transparent (inline C# in the script)
@@ -66,9 +69,9 @@ cmd.exe /c "C:\PROGRA~1\nodejs\node.exe node_modules\electron\cli.js ."
 ## Install & distribution
 - License is MIT (`LICENSE`); `package.json` carries `license`, `repository`, `homepage`, `bugs` and `engines` (`node >=20`), and `.nvmrc` pins 20
 - From source: `git clone` → `npm install` → `npm start` (the `postinstall` fetches Electron); `npm run dev` is an alias of `start`
-- One-line source installer: `scripts/install.ps1` — clones into `%LOCALAPPDATA%\AKU-PLAYER`, installs deps and adds Desktop/Start Menu shortcuts (pointing at `node_modules\electron\dist\electron.exe`, or `dist\AKU.exe` with `-Build`); `-Uninstall` reverses it. Served from the repo raw URL
-- Releases: `.github/workflows/release.yml` builds the portable exe on any `v*` tag (windows-latest, Node 20, `npm run dist`) and attaches `dist/AKU.exe` to the GitHub release. To publish, bump `package.json` `version` and push a matching tag
-- `.gitignore` excludes `node_modules/` and `dist/`; `build/` (icon) is committed. `.gitattributes` forces CRLF for `.ps1`/`.cmd`/`.bat`
+- Source installer: `scripts/install.ps1` — clones into `%LOCALAPPDATA%\AKU-PLAYER`, installs deps and adds Desktop/Start Menu shortcuts (pointing at `node_modules\electron\dist\electron.exe`, or `dist\win-unpacked\AKU.exe` with `-Build`); `-Uninstall` reverses it. Served from the repo raw URL
+- Releases: `.github/workflows/release.yml` builds both the installer and the portable exe on any `v*` tag (windows-latest, Node 20, `npm run dist`) and attaches `dist/AKU-Setup-*.exe` and `dist/AKU-Portable-*.exe` to the GitHub release. To publish, bump `package.json` `version` and push a matching tag
+- `.gitignore` excludes `node_modules/` and `dist/`; `build/` (icon + installer.nsh) is committed. `.gitattributes` forces CRLF for `.ps1`/`.cmd`/`.bat`/`.nsh`
 
 ## Comments
 - Comments are used sparingly and explain *why*, not *what* — range/seek handling, ID stability, the iTunes rate limit, the mini relay, legacy settings migration. Match that style rather than narrating obvious lines

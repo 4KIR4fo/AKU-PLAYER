@@ -24,11 +24,22 @@ no upload, no cloud.
 
 ## Install
 
-### Windows (recommended)
+### Windows installer (recommended)
 
-Download `AKU.exe` from the [latest release](https://github.com/4KIR4fo/AKU-PLAYER/releases/latest)
-and run it. It is a self-contained portable build — nothing to install, and your
-settings live in `%APPDATA%\aku-player`.
+Download `AKU-Setup-<version>.exe` from the
+[latest release](https://github.com/4KIR4fo/AKU-PLAYER/releases/latest) and run
+it. It is a small per-user installer: you choose where AKU is installed
+(default `%LOCALAPPDATA%\Programs\AKU`) and whether a desktop shortcut is
+created. Settings live in `%APPDATA%\aku-player`.
+
+The build is not code-signed, so Windows SmartScreen may warn the first time —
+select *More info* → *Run anyway*.
+
+### Portable (no install)
+
+Prefer nothing installed? Download `AKU-Portable-<version>.exe` from the same
+release and run it. It unpacks to a temp folder on each launch, so it starts a
+little slower, but still keeps its settings in `%APPDATA%\aku-player`.
 
 ### One-line installer (from source)
 
@@ -39,8 +50,8 @@ irm https://raw.githubusercontent.com/4KIR4fo/AKU-PLAYER/main/scripts/install.ps
 ```
 
 This clones the project into `%LOCALAPPDATA%\AKU-PLAYER`, installs dependencies
-and adds Desktop/Start Menu shortcuts. Pass `-Build` to also produce
-`dist\AKU.exe` via electron-builder, or `-Uninstall` to remove it.
+and adds Desktop/Start Menu shortcuts. Pass `-Build` to also produce the
+installer and portable exe via electron-builder, or `-Uninstall` to remove it.
 
 ### From source, by hand
 
