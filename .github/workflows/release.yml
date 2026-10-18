@@ -22,11 +22,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build portable executable
+      - name: Build installer and portable
         run: npm run dist
 
       - name: Attach build to release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/AKU.exe
+          files: |
+            dist/AKU-Setup-*.exe
+            dist/AKU-Portable-*.exe
           generate_release_notes: true
