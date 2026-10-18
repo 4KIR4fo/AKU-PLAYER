@@ -6,13 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-18
+
 ### Added
 
 - Multiple music sources: add any number of folders and/or individual files
   (Settings → Library, or the topbar "Add music" menu), all indexed into one
   library
 - Multi-select track rows (Ctrl/Cmd-click to toggle, Shift-click for a range)
-  with a bulk action bar: play, queue, favorite, add to a playlist
+  with a bulk action bar: play, queue, heart/unheart, add to a playlist, remove
+  from the queue, and remove from the library
 - Queue panel showing the current and upcoming tracks, with click-to-jump and
   "add to queue" from the selection bar
 - Playlist builder: mix any number of genres, albums, artists, eras and years
@@ -22,8 +25,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the best-quality copy (lossless/bit depth/sample rate/bitrate); files with no
   real artist (or no title) are never merged, and it can be toggled in
   Settings → Library
-- View and restore ignored duplicates (Settings → Library): each ignored copy can
-  be kept after all, and restored copies can be ignored again
+- View and restore ignored duplicates (Settings → Library → "Manage
+  duplicates…"): each ignored copy can be kept after all, and restored copies can
+  be ignored again
 - Remove-from-library: the ⊘ track action (and a Remove bulk action) takes a song
   out of the library without touching the file; removed songs are listed under
   Settings → Hidden songs with per-song and "Restore all" actions
@@ -35,6 +39,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   single-folder setting
 - Filled buttons (`.accent-btn`, the repeat-one badge) pick their text colour
   from a per-theme `--accent-text`, so light accents stay readable
+- Shuffle now builds a play order up front and walks it linearly: Next is
+  randomized, but Previous returns to the song that actually played (and the
+  queue panel shows the shuffled order)
+
+[0.4.0]: https://github.com/4KIR4fo/AKU-PLAYER/releases/tag/v0.4.0
 
 ## [0.3.0] - 2026-10-18
 

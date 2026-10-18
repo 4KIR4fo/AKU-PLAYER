@@ -41,6 +41,7 @@ const state = {
   favorites: new Set(),
   playlists: [],
   queue: [],
+  queueOrigin: [],
   queueOpen: false,
   currentId: null,
   selection: new Set(),
@@ -118,6 +119,9 @@ function initEls() {
   els.builderTitle = $('builder-title');
   els.builderSave = $('builder-save');
   els.builderClose = $('builder-close');
+  els.dupesOverlay = $('dupes-overlay');
+  els.dupesBody = $('dupes-body');
+  els.dupesClose = $('dupes-close');
 }
 
 function fmtTime(seconds) {
@@ -820,11 +824,30 @@ function setMiniMode(mode) {
   broadcastState(true);
 }
 
-function playTrack(id, listIds) {
+// Shuffling builds a play order once and is then walked linearly, so Next is
+// randomized but Previous always returns to the song that actually played. The
+// current track sits first only so there is a defined start.
+function shuffledFrom(ids, currentId) {
+  const rest = ids.filter((id) => id !== currentId);
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [rest[i], rest[j]] = [rest[j], rest[i]];
+  }
+  return currentId ? [currentId, ...rest] : rest;
+}
+
+function buildQueue(context, currentId) {
+  state.queueOrigin = context.slice();
+  state.queue = state.shuffle ? shuffledFrom(context, currentId) : context.slice();
+}
+
+function playTrack(id, listIds, keepQueue) {
   const track = trackById(id);
   if (!track) return;
-  const ids = listIds && listIds.length ? listIds : visibleTracks().map((t) => t.id);
-  state.queue = ids;
+  if (!keepQueue) {
+    const context = listIds && listIds.length ? listIds : visibleTracks().map((t) => t.id);
+    buildQueue(context, id);
+  }
   state.currentId = id;
   state.lastPosition = 0;
   audio.src = track.src;
@@ -857,16 +880,10 @@ function playNext(auto) {
   const queue = state.queue;
   if (!queue.length) return;
   const index = queue.indexOf(state.currentId);
-  let nextId = null;
-  if (state.shuffle) {
-    if (queue.length === 1) {
-      nextId = queue[0];
-    } else {
-      do {
-        nextId = queue[Math.floor(Math.random() * queue.length)];
-      } while (nextId === state.currentId);
-    }
-  } else if (index === -1 || index === queue.length - 1) {
+  let nextId;
+  if (index === -1) {
+    nextId = queue[0];
+  } else if (index === queue.length - 1) {
     nextId = auto && state.repeat === 'off' ? null : queue[0];
   } else {
     nextId = queue[index + 1];
@@ -875,7 +892,7 @@ function playNext(auto) {
     updatePlayerBar();
     return;
   }
-  playTrack(nextId, queue);
+  playTrack(nextId, queue, true);
 }
 
 function playPrev() {
@@ -887,7 +904,7 @@ function playPrev() {
   if (!queue.length) return;
   const index = queue.indexOf(state.currentId);
   const prevId = index <= 0 ? queue[queue.length - 1] : queue[index - 1];
-  playTrack(prevId, queue);
+  playTrack(prevId, queue, true);
 }
 
 function seekBy(delta) {
@@ -938,6 +955,7 @@ function applyLibrary(result) {
   if (state.queueOpen) renderQueue();
   if (!els.builderOverlay.classList.contains('hidden')) renderBuilder();
   if (!els.settingsOverlay.classList.contains('hidden')) renderSettings();
+  if (!els.dupesOverlay.classList.contains('hidden')) renderDuplicates();
 }
 
 async function addSource(type) {
@@ -1093,9 +1111,11 @@ function renderSelectionBar() {
     playTrack(ids[0], ids);
   });
   make('Queue', () => addToQueue(ids));
-  make('Favorite', () => setFavorite(ids, !ids.every((id) => state.favorites.has(id))));
+  make('Heart', () => setFavorite(ids, true));
+  make('Unheart', () => setFavorite(ids, false));
   const addBtn = make('Add to playlist\u2026', () => {});
   addBtn.addEventListener('click', () => openPlaylistMenu(ids, addBtn));
+  make('Remove from queue', () => removeFromQueue(ids));
   make('Remove', () => hideTracks(ids));
   make('Clear', () => clearSelection());
 
@@ -1105,15 +1125,25 @@ function renderSelectionBar() {
 function addToQueue(ids) {
   const valid = ids.filter((id) => trackById(id));
   if (!valid.length) return;
-  const queue = state.queue.slice();
-  if (!queue.length) queue.push(...visibleTracks().map((track) => track.id));
-  const at = state.currentId ? queue.indexOf(state.currentId) : -1;
-  const insertAt = at === -1 ? queue.length : at + 1;
-  queue.splice(insertAt, 0, ...valid.filter((id) => !queue.includes(id)));
-  state.queue = queue;
+  if (!state.queue.length) state.queue = visibleTracks().map((track) => track.id);
+  const at = state.currentId ? state.queue.indexOf(state.currentId) : -1;
+  const insertAt = at === -1 ? state.queue.length : at + 1;
+  state.queue.splice(insertAt, 0, ...valid.filter((id) => !state.queue.includes(id)));
+  const origin = state.queueOrigin.length ? state.queueOrigin : state.queue.slice();
+  for (const id of valid) if (!origin.includes(id)) origin.push(id);
+  state.queueOrigin = origin;
   persist();
   if (state.queueOpen) renderQueue();
   els.status.textContent = `Queued ${valid.length} track${valid.length === 1 ? '' : 's'}.`;
+}
+
+function removeFromQueue(ids) {
+  const drop = new Set(ids.filter((id) => state.queue.includes(id)));
+  if (!drop.size) return;
+  state.queue = state.queue.filter((id) => !drop.has(id));
+  state.queueOrigin = state.queueOrigin.filter((id) => !drop.has(id));
+  if (state.queueOpen) renderQueue();
+  els.status.textContent = `Removed ${drop.size} track${drop.size === 1 ? '' : 's'} from the queue.`;
 }
 
 function renderQueue() {
@@ -1143,7 +1173,7 @@ function renderQueue() {
     artist.textContent = track.artist;
     meta.append(title, artist);
     item.append(num, meta);
-    item.addEventListener('click', () => playTrack(id, state.queue));
+    item.addEventListener('click', () => playTrack(id, null, true));
     els.queueList.appendChild(item);
   });
   const current = els.queueList.querySelector('.queue-item.current');
@@ -2166,31 +2196,62 @@ function buildHiddenRow() {
 }
 
 // Duplicates are only ignored automatically; "Restore" pins a copy so it stays
-// even though it looks like another track, and "Ignore again" unpins it.
+// even though it looks like another track, and "Ignore again" unpins it. The
+// list lives in its own overlay so it doesn't bloat the Settings panel.
 function buildDuplicatesRow() {
   const wrap = document.createElement('div');
-  wrap.className = 'sources-row';
+  wrap.className = 'set-row set-row-top';
+  const text = document.createElement('span');
+  text.className = 'set-label';
+  text.textContent = 'Duplicates';
+  const hint = document.createElement('span');
+  hint.className = 'set-hint';
+  hint.textContent = state.dedupe
+    ? `${state.ignored.length} ignored, ${state.dupesKept.length} restored`
+    : 'Ignoring is off \u2014 every copy shows';
+  text.appendChild(hint);
+  const manage = document.createElement('button');
+  manage.className = 'ghost-btn';
+  manage.textContent = 'Manage duplicates\u2026';
+  manage.addEventListener('click', openDuplicates);
+  wrap.append(text, manage);
+  return wrap;
+}
 
-  const title = document.createElement('div');
-  title.className = 'sources-title';
-  title.textContent = `Ignored duplicates (${state.ignored.length})`;
-  wrap.appendChild(title);
+function openDuplicates() {
+  renderDuplicates();
+  els.dupesOverlay.classList.remove('hidden');
+}
+
+function closeDuplicates() {
+  els.dupesOverlay.classList.add('hidden');
+}
+
+function renderDuplicates() {
+  els.dupesBody.replaceChildren();
 
   if (!state.ignored.length && !state.dupesKept.length) {
     const empty = document.createElement('div');
     empty.className = 'set-hint';
     empty.textContent = 'No duplicates ignored. Songs are matched on the same title and artist.';
-    wrap.appendChild(empty);
-    return wrap;
+    els.dupesBody.appendChild(empty);
+    return;
   }
 
+  const heading = (label) => {
+    const title = document.createElement('div');
+    title.className = 'sources-title';
+    title.textContent = label;
+    return title;
+  };
+
+  els.dupesBody.appendChild(heading(`Ignored duplicates (${state.ignored.length})`));
   if (!state.ignored.length) {
-    const empty = document.createElement('div');
-    empty.className = 'set-hint';
-    empty.textContent = 'Nothing ignored right now.';
-    wrap.appendChild(empty);
+    const none = document.createElement('div');
+    none.className = 'set-hint';
+    none.textContent = 'Nothing ignored right now.';
+    els.dupesBody.appendChild(none);
   }
-
   for (const entry of state.ignored) {
     const row = document.createElement('div');
     row.className = 'source-item';
@@ -2213,9 +2274,8 @@ function buildDuplicatesRow() {
     restore.textContent = 'Restore';
     restore.addEventListener('click', () => restoreDuplicates([entry.id]));
     row.append(icon, text, restore);
-    wrap.appendChild(row);
+    els.dupesBody.appendChild(row);
   }
-
   if (state.ignored.length) {
     const actions = document.createElement('div');
     actions.className = 'sources-actions';
@@ -2224,36 +2284,37 @@ function buildDuplicatesRow() {
     all.textContent = 'Restore all';
     all.addEventListener('click', restoreAllDuplicates);
     actions.appendChild(all);
-    wrap.appendChild(actions);
+    els.dupesBody.appendChild(actions);
   }
 
-  if (state.dupesKept.length) {
-    const keptTitle = document.createElement('div');
-    keptTitle.className = 'sources-title dup-kept-title';
-    keptTitle.textContent = `Restored duplicates (${state.dupesKept.length})`;
-    wrap.appendChild(keptTitle);
-    for (const entry of state.dupesKept) {
-      const row = document.createElement('div');
-      row.className = 'source-item';
-      const icon = document.createElement('span');
-      icon.className = 'source-icon';
-      icon.textContent = '\u2714';
-      const text = document.createElement('div');
-      text.className = 'dup-text';
-      const primary = document.createElement('span');
-      primary.className = 'dup-name';
-      primary.textContent = [entry.artist, entry.title].filter(Boolean).join(' \u2014 ');
-      text.appendChild(primary);
-      const ignore = document.createElement('button');
-      ignore.className = 'ghost-btn source-remove';
-      ignore.textContent = 'Ignore again';
-      ignore.addEventListener('click', () => ignoreDuplicates([entry.id]));
-      row.append(icon, text, ignore);
-      wrap.appendChild(row);
-    }
+  const keptHeading = heading(`Restored duplicates (${state.dupesKept.length})`);
+  keptHeading.classList.add('dup-kept-title');
+  els.dupesBody.appendChild(keptHeading);
+  if (!state.dupesKept.length) {
+    const none = document.createElement('div');
+    none.className = 'set-hint';
+    none.textContent = 'None restored. Restore an ignored copy to keep it.';
+    els.dupesBody.appendChild(none);
   }
-
-  return wrap;
+  for (const entry of state.dupesKept) {
+    const row = document.createElement('div');
+    row.className = 'source-item';
+    const icon = document.createElement('span');
+    icon.className = 'source-icon';
+    icon.textContent = '\u2714';
+    const text = document.createElement('div');
+    text.className = 'dup-text';
+    const primary = document.createElement('span');
+    primary.className = 'dup-name';
+    primary.textContent = [entry.artist, entry.title].filter(Boolean).join(' \u2014 ');
+    text.appendChild(primary);
+    const ignore = document.createElement('button');
+    ignore.className = 'ghost-btn source-remove';
+    ignore.textContent = 'Ignore again';
+    ignore.addEventListener('click', () => ignoreDuplicates([entry.id]));
+    row.append(icon, text, ignore);
+    els.dupesBody.appendChild(row);
+  }
 }
 
 function renderSettings() {
@@ -2381,6 +2442,11 @@ function wireEvents() {
     if (event.target === els.settingsOverlay) closeSettings();
   });
 
+  els.dupesClose.addEventListener('click', closeDuplicates);
+  els.dupesOverlay.addEventListener('click', (event) => {
+    if (event.target === els.dupesOverlay) closeDuplicates();
+  });
+
   els.sidebarToggle.addEventListener('click', () => {
     state.sidebarPinned = !state.sidebarPinned;
     persist();
@@ -2424,8 +2490,14 @@ function wireEvents() {
 
   els.shuffleBtn.addEventListener('click', () => {
     state.shuffle = !state.shuffle;
+    if (state.queue.length) {
+      const base = state.queueOrigin.length ? state.queueOrigin : state.queue;
+      state.queue = state.shuffle ? shuffledFrom(base, state.currentId) : base.slice();
+      if (state.queueOpen) renderQueue();
+    }
     persist();
     updatePlayerBar();
+    broadcastState(true);
   });
 
   els.repeatBtn.addEventListener('click', () => {
@@ -2492,6 +2564,10 @@ function wireEvents() {
       closeSettings();
       return;
     }
+    if (event.key === 'Escape' && !els.dupesOverlay.classList.contains('hidden')) {
+      closeDuplicates();
+      return;
+    }
     const tag = (event.target.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'textarea' || tag === 'select' || event.target.isContentEditable) {
       return;
@@ -2542,6 +2618,7 @@ async function loadLibrary() {
     if (track) {
       // Load the track but stay paused; the position is applied once metadata
       // is ready (see the loadedmetadata handler) so we don't autoplay.
+      buildQueue(state.tracks.map((t) => t.id), state.currentId);
       audio.src = track.src;
       pendingResume = state.lastPosition || 0;
       audio.load();

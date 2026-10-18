@@ -225,7 +225,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 
 .track-row {
   display: grid;
-  grid-template-columns: 40px minmax(0, 2.2fr) minmax(0, 1.4fr) minmax(0, 1.4fr) 56px 64px;
+  grid-template-columns: 40px minmax(0, 2.2fr) minmax(0, 1.4fr) minmax(0, 1.4fr) 56px 96px;
   align-items: center;
   gap: 12px;
   padding: 6px 10px;
@@ -654,7 +654,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 
 /* Density and cover toggles */
 html[data-cover="off"] .track-row {
-  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.4fr) minmax(0, 1.4fr) 56px 64px;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.4fr) minmax(0, 1.4fr) 56px 96px;
 }
 html[data-cover="off"] .track-row > .cover { display: none; }
 
@@ -695,8 +695,11 @@ html[data-favorites="off"] .fav-btn { display: none; }
   transform: translateX(-50%);
   z-index: 20;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 8px;
+  max-width: min(760px, calc(100% - 32px));
   padding: 8px 12px;
   border-radius: 999px;
   background: var(--panel);
@@ -780,7 +783,8 @@ html[data-favorites="off"] .fav-btn { display: none; }
 .dup-kept-title { margin-top: 14px; }
 
 /* Playlist builder */
-#builder-overlay {
+#builder-overlay,
+#dupes-overlay {
   position: fixed;
   inset: 0;
   z-index: 100;
@@ -790,7 +794,8 @@ html[data-favorites="off"] .fav-btn { display: none; }
   justify-content: center;
 }
 
-#builder-panel {
+#builder-panel,
+#dupes-panel {
   width: min(680px, 94vw);
   max-height: 86vh;
   display: flex;
@@ -802,7 +807,8 @@ html[data-favorites="off"] .fav-btn { display: none; }
   overflow: hidden;
 }
 
-#builder-header {
+#builder-header,
+#dupes-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -814,7 +820,8 @@ html[data-favorites="off"] .fav-btn { display: none; }
 }
 .builder-header-actions { display: flex; align-items: center; gap: 8px; }
 
-#builder-body { padding: 14px 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+#builder-body,
+#dupes-body { padding: 14px 18px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
 
 .b-head { display: flex; align-items: center; gap: 14px; }
 .b-name {

@@ -14,10 +14,12 @@ no upload, no cloud.
   (codec, bitrate, sample rate, lossless) read via ID3/FLAC/etc. metadata
 - **Browse views** — Albums, Artists, Genres and Eras, each with its own detail page
 - **Search** — filters group names on browse pages, track names everywhere else
-- **Queue, shuffle and repeat**, plus favorites and playlists
+- **Queue, shuffle and repeat**, plus favorites and playlists. Shuffle builds a
+  play order up front, so Next is random but Previous always returns to the song
+  that actually played
 - **Duplicate handling** — keeps the best-quality copy of the same title and
   artist, leaves songs without an artist alone, and lets you view and restore
-  ignored copies (on by default, toggle in Settings)
+  ignored copies from Settings → Library → *Manage duplicates…* (on by default)
 - **Remove from library without deleting** — the ⊘ button (or the selection bar)
   hides a song; restore it any time from Settings → Hidden songs
 - **Genre tools** — group tracks into auto playlists, or fill in missing genres
