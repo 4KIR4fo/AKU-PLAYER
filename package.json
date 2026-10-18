@@ -29,8 +29,8 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "build": "electron-builder --win",
-    "dist": "electron-builder --win",
+    "build": "electron-builder --win --publish never",
+    "dist": "electron-builder --win --publish never",
     "postinstall": "node node_modules/electron/install.js"
   },
   "build": {
