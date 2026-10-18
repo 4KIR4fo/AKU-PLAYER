@@ -1,7 +1,7 @@
 {
   "name": "aku-player",
   "productName": "aku-player",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A local music player for Windows",
   "author": "4KIR4fo",
   "license": "MIT",
@@ -29,14 +29,13 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "build": "electron-builder --win portable",
-    "dist": "electron-builder --win portable",
+    "build": "electron-builder --win",
+    "dist": "electron-builder --win",
     "postinstall": "node node_modules/electron/install.js"
   },
   "build": {
     "appId": "com.akuplayer.app",
     "productName": "aku-player",
-    "artifactName": "AKU.${ext}",
     "files": [
       "main.js",
       "preload.js",
@@ -54,8 +53,23 @@
       "icon": "build/icon.png",
       "executableName": "AKU",
       "target": [
+        "nsis",
         "portable"
       ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AKU",
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "AKU",
+      "artifactName": "AKU-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "AKU-Portable-${version}.${ext}"
     }
   },
   "devDependencies": {
