@@ -7,8 +7,7 @@ const DEFAULT_SETTINGS = {
   genreTools: true,
   favorites: true,
   qualityIndicator: true,
-  coverArt: true,
-  compactDensity: false,
+  rowDisplay: 'comfortable',
   resumePlayback: false,
   confirmPlaylistDelete: true,
   shuffleRepeat: true,
@@ -234,6 +233,14 @@ function restore() {
   if (saved.repeat === 'all' || saved.repeat === 'one') state.repeat = saved.repeat;
   if (saved.settings && typeof saved.settings === 'object') {
     state.settings = { ...DEFAULT_SETTINGS, ...saved.settings };
+    // Older builds stored row cover art and density as two separate toggles;
+    // fold them into the single rowDisplay choice so saved prefs still apply.
+    if (saved.settings.rowDisplay === undefined &&
+      (saved.settings.coverArt === false || saved.settings.compactDensity === true)) {
+      state.settings.rowDisplay = saved.settings.compactDensity ? 'compact' : 'no-covers';
+    }
+    delete state.settings.coverArt;
+    delete state.settings.compactDensity;
   }
   if (typeof saved.sidebarPinned === 'boolean') state.sidebarPinned = saved.sidebarPinned;
   if (saved.miniMode === 'cube' || saved.miniMode === 'full') state.miniMode = saved.miniMode;
@@ -291,6 +298,8 @@ function albumGroups() {
   const map = new Map();
   for (const track of state.tracks) {
     const album = track.album || 'Unknown album';
+    // Join album and artist with NUL (never present in tag text) so one
+    // album's tracks by different artists don't get merged into a single group.
     const key = `${album}\u0000${track.artist || ''}`;
     let group = map.get(key);
     if (!group) {
@@ -486,7 +495,7 @@ function renderTrackList() {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     if (!state.folder) {
-      empty.textContent = 'No music loaded yet. Choose a folder to build your library.';
+      empty.textContent = 'No music yet. Pick a folder and AKU will index what it finds.';
       const btn = document.createElement('button');
       btn.className = 'accent-btn';
       btn.textContent = 'Choose music folder';
@@ -494,13 +503,13 @@ function renderTrackList() {
       empty.appendChild(document.createElement('br'));
       empty.appendChild(btn);
     } else if (state.search.trim()) {
-      empty.textContent = 'No tracks match your search.';
+      empty.textContent = 'Nothing matched your search.';
     } else if (state.view.type === 'favorites') {
       empty.textContent = 'No favorites yet. Click the heart on any track.';
     } else if (state.view.type === 'playlist') {
       empty.textContent = 'This playlist is empty. Use the + button on a track to add it.';
     } else if (['album', 'artist', 'genre', 'era'].includes(state.view.type)) {
-      empty.textContent = 'No tracks here.';
+      empty.textContent = 'No tracks in here yet.';
     } else {
       empty.textContent = 'No audio files found in this folder.';
     }
@@ -1203,8 +1212,9 @@ function applySettings() {
   const s = state.settings;
   applyTheme();
   applySidebar();
-  document.documentElement.dataset.cover = s.coverArt ? 'on' : 'off';
-  document.documentElement.dataset.density = s.compactDensity ? 'compact' : 'normal';
+  const display = s.rowDisplay || 'comfortable';
+  document.documentElement.dataset.cover = display === 'no-covers' ? 'off' : 'on';
+  document.documentElement.dataset.density = display === 'compact' ? 'compact' : 'normal';
   document.documentElement.dataset.favorites = s.favorites ? 'on' : 'off';
   els.categorizeBtn.classList.toggle('hidden', !s.genreTools);
   els.genreMaker.classList.toggle('hidden', !s.genreTools);
@@ -1255,8 +1265,10 @@ function settingsSections() {
         { type: 'toggle', key: 'genreTools', label: 'Genre tools', hint: 'Genre playlists and online categorizer' },
         { type: 'toggle', key: 'favorites', label: 'Favorites' },
         { type: 'toggle', key: 'qualityIndicator', label: 'Quality indicator' },
-        { type: 'toggle', key: 'coverArt', label: 'Cover art in rows' },
-        { type: 'toggle', key: 'compactDensity', label: 'Compact density' }
+        {
+          type: 'segment', key: 'rowDisplay', label: 'Track rows',
+          options: [['comfortable', 'Comfortable'], ['compact', 'Compact'], ['no-covers', 'No covers']]
+        }
       ]
     },
     {
@@ -1582,6 +1594,8 @@ async function loadLibrary() {
   if (state.settings.resumePlayback && state.currentId) {
     const track = trackById(state.currentId);
     if (track) {
+      // Load the track but stay paused; the position is applied once metadata
+      // is ready (see the loadedmetadata handler) so we don't autoplay.
       audio.src = track.src;
       pendingResume = state.lastPosition || 0;
       audio.load();
